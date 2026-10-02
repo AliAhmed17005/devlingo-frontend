@@ -10,7 +10,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   LayoutDashboard, BookOpen, Trophy, Award,
   GraduationCap, Download, Bell, Settings, Sun, Moon,
-  LogOut, Menu, MessageSquare, Code, LineChart
+  LogOut, Menu, MessageSquare
 } from "lucide-react";
 
 const NAV = [
