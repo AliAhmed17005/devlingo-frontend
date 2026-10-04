@@ -12,27 +12,14 @@ import {
   linkWithPopup,
   unlink
 } from "firebase/auth";
-import { doc, setDoc, serverTimestamp, updateDoc, collection, getDocs } from "firebase/firestore";
+import { doc, setDoc, serverTimestamp, updateDoc } from "firebase/firestore";
 
 // ── Email + Password Signup ──
 export async function signup(email, password, name) {
   const cred = await createUserWithEmailAndPassword(auth, email, password);
   await updateProfile(cred.user, { displayName: name });
   
-  // Generate a unique sequential tag ID (e.g., DV-001)
-  let tagId = "DV-001";
-  try {
-    const usersSnap = await getDocs(collection(db, "users"));
-    let nextNum = usersSnap.size + 1;
-    tagId = "DV-" + String(nextNum).padStart(3, "0");
-    const existingTags = new Set(usersSnap.docs.map(d => d.data().tagId).filter(Boolean));
-    while (existingTags.has(tagId)) {
-      nextNum++;
-      tagId = "DV-" + String(nextNum).padStart(3, "0");
-    }
-  } catch (err) {
-    console.error("Error generating tagId:", err);
-  }
+  const tagId = "DV-" + Math.random().toString(36).substr(2, 6).toUpperCase();
 
   await setDoc(doc(db, "users", cred.user.uid), {
     name,

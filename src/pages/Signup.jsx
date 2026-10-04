@@ -54,12 +54,16 @@ export default function Signup() {
     setLoading(true);
     try {
       const fullName = `${firstName} ${lastName}`.trim();
-      await signup(email, password, fullName);
+      const signupPromise = signup(email, password, fullName);
+      const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error("Signup timed out. Please try again.")), 15000)
+      );
+      await Promise.race([signupPromise, timeoutPromise]);
       toast.success("Account created successfully! Welcome to DevLingo.");
       navigate("/dashboard");
     } catch (err) {
       console.error("Signup error:", err);
-      toast.error(err.message?.includes("email-already") ? "Email already in use" : "Signup failed. Try again.");
+      toast.error(err.message?.includes("email-already") ? "Email already in use" : err.message || "Signup failed. Try again.");
     }
     setLoading(false);
   };
