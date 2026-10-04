@@ -2,7 +2,6 @@ import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { signup } from "../firebase/auth";
 import { useTheme } from "../context/ThemeContext";
-import toast from "react-hot-toast";
 
 export default function Signup() {
   const [firstName, setFirstName] = useState("");
@@ -11,6 +10,8 @@ export default function Signup() {
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [verificationSent, setVerificationSent] = useState(false);
   const { isDark } = useTheme();
   const navigate = useNavigate();
 
@@ -23,50 +24,95 @@ export default function Signup() {
   const strengthLabels = ["","Weak","Fair","Good","Strong"];
 
   const handleFirstNameChange = (e) => {
-    // Only allow alphabets (a-z, A-Z)
     const val = e.target.value.replace(/[^a-zA-Z]/g, "");
     setFirstName(val);
   };
 
   const handleLastNameChange = (e) => {
-    // Only allow alphabets (a-z, A-Z)
     const val = e.target.value.replace(/[^a-zA-Z]/g, "");
     setLastName(val);
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!firstName.trim()) {
-      return toast.error("Please enter a valid First Name.");
+    setError("");
+
+    const fullName = `${firstName || ""} ${lastName || ""}`.trim();
+
+    if (!fullName || fullName.length < 2) {
+      setError("Please enter your name.");
+      return;
     }
-    if (!lastName.trim()) {
-      return toast.error("Please enter a valid Last Name.");
+    if (!email) {
+      setError("Please enter your email.");
+      return;
     }
-    if (!/^[a-zA-Z]+$/.test(firstName)) {
-      return toast.error("First Name must contain only alphabets.");
+    if (!password || password.length < 6) {
+      setError("Password must be at least 6 characters.");
+      return;
     }
-    if (!/^[a-zA-Z]+$/.test(lastName)) {
-      return toast.error("Last Name must contain only alphabets.");
+    if (password !== confirm) {
+      setError("Passwords do not match.");
+      return;
     }
-    if (password !== confirm) return toast.error("Passwords don't match");
-    if (password.length < 6) return toast.error("Password must be 6+ characters");
-    
+
     setLoading(true);
+
     try {
-      const fullName = `${firstName} ${lastName}`.trim();
       const signupPromise = signup(email, password, fullName);
       const timeoutPromise = new Promise((_, reject) =>
-        setTimeout(() => reject(new Error("Signup timed out. Please try again.")), 15000)
+        setTimeout(() => reject(
+          new Error("Taking too long. Check your internet and try again.")
+        ), 12000)
       );
       await Promise.race([signupPromise, timeoutPromise]);
-      toast.success("Account created successfully! Welcome to DevLingo.");
-      navigate("/dashboard");
+      setVerificationSent(true);
     } catch (err) {
-      console.error("Signup error:", err);
-      toast.error(err.message?.includes("email-already") ? "Email already in use" : err.message || "Signup failed. Try again.");
+      if (err.code === "auth/email-already-in-use") {
+        setError("This email is already registered. Please sign in instead.");
+      } else if (err.code === "auth/invalid-email") {
+        setError("Please enter a valid email address.");
+      } else if (err.code === "auth/weak-password") {
+        setError("Password is too weak. Use at least 6 characters.");
+      } else {
+        setError(err.message || "Signup failed. Please try again.");
+      }
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   };
+
+  if (verificationSent) {
+    return (
+      <div style={{ minHeight:"100vh",background:s.bg,display:"flex",alignItems:"stretch" }}>
+        <div style={{ flex:1,background:"linear-gradient(145deg,#4338ca 0%,#6366f1 50%,#0f9b8e 100%)",display:"flex",flexDirection:"column",justifyContent:"center",alignItems:"center",padding:48 }} className="hidden lg:flex">
+          <div style={{ textAlign:"center",maxWidth:360 }}>
+            <h2 style={{ color:"white",fontSize:28,fontWeight:600,margin:"0 0 12px",lineHeight:1.3 }}>Start your coding journey</h2>
+            <p style={{ color:"rgba(255,255,255,0.7)",fontSize:15,lineHeight:1.7,marginBottom:32 }}>Join developers learning with AI-powered adaptive courses</p>
+          </div>
+        </div>
+
+        <div style={{ width:"100%",maxWidth:480,background:s.bg,display:"flex",alignItems:"center",justifyContent:"center",padding:32 }}>
+          <div style={{ width:"100%" }}>
+            <div style={{ background:s.card,border:`1px solid ${s.border}`,borderRadius:12,padding:32,textAlign:"center" }}>
+              <div style={{ width:56,height:56,borderRadius:"50%",background:"rgba(99,102,241,0.1)",color:"#6366f1",display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 16px",fontSize:24 }}>
+                ✉️
+              </div>
+              <h2 style={{ fontWeight:600,fontSize:22,color:s.text,margin:"0 0 12px" }}>Check your email!</h2>
+              <p style={{ color:s.muted,fontSize:14,lineHeight:1.6,margin:"0 0 24px" }}>
+                We sent a verification link to <strong style={{ color:s.text }}>{email}</strong>. Open your Gmail, click the link, then come back here to sign in.
+              </p>
+              <button
+                onClick={() => navigate("/login")}
+                style={{ width:"100%",padding:"12px",borderRadius:8,background:"#6366f1",color:"white",border:"none",fontWeight:600,fontSize:14,cursor:"pointer" }}>
+                Go to Login
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div style={{ minHeight:"100vh",background:s.bg,display:"flex",alignItems:"stretch" }}>
@@ -92,6 +138,13 @@ export default function Signup() {
               <h2 style={{ fontWeight:600,fontSize:18,color:s.text,margin:"0 0 4px" }}>Create account</h2>
               <p style={{ color:s.muted,fontSize:13,margin:0 }}>Get started with DevLingo</p>
             </div>
+
+            {error && (
+              <div style={{ background:"rgba(239,68,68,0.1)",border:"1px solid rgba(239,68,68,0.3)",color:"#ef4444",padding:"10px 12px",borderRadius:8,fontSize:13,marginBottom:16 }}>
+                {error}
+              </div>
+            )}
+
             <form onSubmit={handleSubmit} style={{ display:"flex",flexDirection:"column",gap:14 }}>
               <div style={{ display:"grid",gridTemplateColumns:"1fr 1fr",gap:12 }}>
                 <div>
@@ -155,4 +208,3 @@ export default function Signup() {
     </div>
   );
 }
-

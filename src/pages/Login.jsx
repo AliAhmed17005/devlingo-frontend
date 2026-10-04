@@ -2,13 +2,13 @@ import { useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { login } from "../firebase/auth";
 import { useTheme } from "../context/ThemeContext";
-import toast from "react-hot-toast";
 
 export default function Login() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPw, setShowPw] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
   const { isDark, toggleTheme } = useTheme();
   const navigate = useNavigate();
 
@@ -18,16 +18,23 @@ export default function Login() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    setError("");
     setLoading(true);
     try {
       await login(email, password);
-      toast.success("Welcome back!");
       navigate("/dashboard");
     } catch (err) {
-      console.error("Login error:", err);
-      toast.error("Invalid email or password. Please try again.");
+      if (err.code === "auth/user-not-found" || err.code === "auth/wrong-password" 
+          || err.code === "auth/invalid-credential") {
+        setError("Invalid email or password. Please try again.");
+      } else if (err.code === "auth/too-many-requests") {
+        setError("Too many attempts. Please wait a few minutes and try again.");
+      } else {
+        setError(err.message || "Login failed. Please try again.");
+      }
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   };
 
   return (
@@ -64,6 +71,12 @@ export default function Login() {
               <p style={{ color:s.muted,fontSize:13,margin:0 }}>Welcome back to DevLingo</p>
             </div>
 
+            {error && (
+              <div style={{ background:"rgba(239,68,68,0.1)",border:"1px solid rgba(239,68,68,0.3)",color:"#ef4444",padding:"10px 12px",borderRadius:8,fontSize:13,marginBottom:16 }}>
+                {error}
+              </div>
+            )}
+
             <form onSubmit={handleSubmit} style={{ display:"flex",flexDirection:"column",gap:14 }}>
               <div>
                 <label style={{ display:"block",fontSize:12,fontWeight:500,color:s.muted,marginBottom:5 }}>Email</label>
@@ -99,4 +112,3 @@ export default function Login() {
     </div>
   );
 }
-
