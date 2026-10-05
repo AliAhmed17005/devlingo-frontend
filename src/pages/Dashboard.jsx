@@ -236,7 +236,7 @@ export default function Dashboard() {
           <div style={{ background:s.card,border:`1px solid ${s.border}`,borderRadius:10,padding:20 }}>
             <p style={{ color:s.muted,fontSize:11,fontWeight:600,letterSpacing:0.8,margin:"0 0 8px",textTransform:"uppercase" }}>Today's Task</p>
             <p style={{ fontWeight:600,fontSize:16,color:s.text,margin:"0 0 4px" }}>
-              {currentCourses[0] ? "Arrays & Objects" : "No course enrolled"}
+              {currentCourses[0] ? `${currentCourses[0].title} — ${currentCourses[0].topics?.[0]?.title || "Basics"}` : "No course enrolled"}
             </p>
             <p style={{ color:s.muted,fontSize:13,margin:"0 0 14px" }}>7 questions · ~20 mins</p>
             <div style={{ display:"flex",alignItems:"center",gap:8,marginBottom:14 }}>
@@ -244,7 +244,7 @@ export default function Dashboard() {
               <span style={{ color:s.muted,fontSize:12 }}>Due by midnight</span>
             </div>
             <div style={{ display:"flex",gap:8 }}>
-              <button onClick={() => currentCourses[0] && navigate(`/study/${currentCourses[0].id}/t3`)}
+              <button onClick={() => currentCourses[0] && navigate(`/study/${currentCourses[0].id}/${currentCourses[0].topics?.[0]?.id || "t1"}`)}
                 style={{ flex:1,padding:"9px",borderRadius:8,background:"#6366f1",color:"white",border:"none",fontWeight:600,fontSize:13,cursor:"pointer" }}>
                 Start Task
               </button>

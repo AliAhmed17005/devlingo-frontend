@@ -24,7 +24,7 @@ export function CourseOnboarding() {
   useEffect(() => {
     getDoc(doc(db, "courses", courseId)).then(snap => {
       if (snap.exists()) setCourse({ id: snap.id, ...snap.data() });
-    });
+    }).catch(err => console.error("Error fetching course:", err));
   }, [courseId]);
 
   const enroll = async (isNew) => {
@@ -218,7 +218,7 @@ export function CourseRoadmap() {
   useEffect(() => {
     getDoc(doc(db, "courses", courseId)).then(snap => {
       if (snap.exists()) setCourse({ id: snap.id, ...snap.data() });
-    });
+    }).catch(err => console.error("Error fetching course:", err));
     if (!currentUser) return;
     return onSnapshot(doc(db, "users", currentUser.uid), snap => {
       if (snap.exists()) setUserData(snap.data());
@@ -227,7 +227,7 @@ export function CourseRoadmap() {
 
   useEffect(() => {
     if (!currentUser) return;
-    fetch(`http://localhost:8000/difficulty/skill-ratings/${currentUser.uid}`)
+    fetch(`${process.env.REACT_APP_BACKEND_URL || "http://localhost:8000"}/difficulty/skill-ratings/${currentUser.uid}`)
       .then(res => {
         if (res.ok) return res.json();
         throw new Error("Failed to fetch skill ratings");

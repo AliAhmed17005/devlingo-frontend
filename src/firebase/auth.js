@@ -63,14 +63,26 @@ export async function signup(email, password, name) {
     createdAt:  serverTimestamp()
   })
 
+  let emailSent = false;
   try {
-    await sendEmailVerification(cred.user)
+    const actionCodeSettings = {
+      url: `${window.location.origin}/login?verified=true`,
+      handleCodeInApp: true,
+    };
+    await sendEmailVerification(cred.user, actionCodeSettings);
+    emailSent = true;
   } catch (e) {
-    console.log("Verification email failed silently:", e)
+    console.warn("Verification email with ActionCodeSettings failed, trying fallback default:", e);
+    try {
+      await sendEmailVerification(cred.user);
+      emailSent = true;
+    } catch (e2) {
+      console.error("Verification email failed completely:", e2);
+    }
   }
 
   await signOut(auth)
-  return cred.user
+  return { user: cred.user, emailSent }
 }
 
 export async function login(email, password) {
@@ -81,9 +93,19 @@ export async function login(email, password) {
 export async function resendVerification(email, password) {
   const cred = await signInWithEmailAndPassword(auth, email, password)
   if (!cred.user.emailVerified) {
-    await sendEmailVerification(cred.user)
+    try {
+      const actionCodeSettings = {
+        url: `${window.location.origin}/login?verified=true`,
+        handleCodeInApp: true,
+      };
+      await sendEmailVerification(cred.user, actionCodeSettings);
+    } catch (e) {
+      await sendEmailVerification(cred.user);
+    }
     await signOut(auth)
+    return true;
   } else {
+    await signOut(auth);
     throw new Error("Email is already verified. You can sign in normally.")
   }
 }

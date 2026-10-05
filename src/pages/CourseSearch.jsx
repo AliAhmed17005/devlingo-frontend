@@ -27,16 +27,21 @@ export default function CourseSearch() {
 
   useEffect(() => {
     async function load() {
-      const snap = await getDocs(collection(db, "courses"));
-      setCourses(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-      if (currentUser) {
-        const userSnap = await getDoc(doc(db, "users", currentUser.uid));
-        if (userSnap.exists()) {
-          const enrolled = userSnap.data().enrolledCourses || [];
-          setEnrolledIds(enrolled.map(e => e.courseId || e));
+      try {
+        const snap = await getDocs(collection(db, "courses"));
+        setCourses(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+        if (currentUser) {
+          const userSnap = await getDoc(doc(db, "users", currentUser.uid));
+          if (userSnap.exists()) {
+            const enrolled = userSnap.data().enrolledCourses || [];
+            setEnrolledIds(enrolled.map(e => e.courseId || e));
+          }
         }
+      } catch (err) {
+        console.error("Error loading courses:", err);
+      } finally {
+        setLoading(false);
       }
-      setLoading(false);
     }
     load();
   }, [currentUser]);

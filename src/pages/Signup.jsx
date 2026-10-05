@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { signup } from "../firebase/auth";
+import { signup, resendVerification } from "../firebase/auth";
 import { useTheme } from "../context/ThemeContext";
+import toast from "react-hot-toast";
 
 export default function Signup() {
   const [firstName, setFirstName] = useState("");
@@ -10,6 +11,7 @@ export default function Signup() {
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
   const [loading, setLoading] = useState(false);
+  const [resending, setResending] = useState(false);
   const [error, setError] = useState("");
   const [verificationSent, setVerificationSent] = useState(false);
   const { isDark } = useTheme();
@@ -59,17 +61,16 @@ export default function Signup() {
     setLoading(true);
 
     try {
-      const signupPromise = signup(email, password, fullName);
-      const timeoutPromise = new Promise((_, reject) =>
-        setTimeout(() => reject(
-          new Error("Taking too long. Check your internet and try again.")
-        ), 12000)
-      );
-      await Promise.race([signupPromise, timeoutPromise]);
+      const res = await signup(email, password, fullName);
+      if (res && res.emailSent === false) {
+        toast.error("Account created! Verification email could not be sent automatically. Click 'Resend Verification Email' below.");
+      } else {
+        toast.success("Account created successfully!");
+      }
       setVerificationSent(true);
     } catch (err) {
       if (err.code === "auth/email-already-in-use") {
-        setError("This email is already registered. Please sign in instead.");
+        setError("This email is already registered. If you need a verification email, click Sign in or try logging in.");
       } else if (err.code === "auth/invalid-email") {
         setError("Please enter a valid email address.");
       } else if (err.code === "auth/weak-password") {
@@ -79,6 +80,18 @@ export default function Signup() {
       }
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleResend = async () => {
+    try {
+      setResending(true);
+      await resendVerification(email, password);
+      toast.success("Verification email resent! Check your inbox and spam folder.");
+    } catch (err) {
+      toast.error(err.message || "Failed to resend verification email.");
+    } finally {
+      setResending(false);
     }
   };
 
@@ -100,13 +113,22 @@ export default function Signup() {
               </div>
               <h2 style={{ fontWeight:600,fontSize:22,color:s.text,margin:"0 0 12px" }}>Check your email!</h2>
               <p style={{ color:s.muted,fontSize:14,lineHeight:1.6,margin:"0 0 24px" }}>
-                We sent a verification link to <strong style={{ color:s.text }}>{email}</strong>. Open your Gmail, click the link, then come back here to sign in.
+                We sent a verification link to <strong style={{ color:s.text }}>{email}</strong>. Open your email inbox (or check Spam/Junk folder), click the verification link, then sign in.
               </p>
-              <button
-                onClick={() => navigate("/login")}
-                style={{ width:"100%",padding:"12px",borderRadius:8,background:"#6366f1",color:"white",border:"none",fontWeight:600,fontSize:14,cursor:"pointer" }}>
-                Go to Login
-              </button>
+
+              <div style={{ display:"flex",flexDirection:"column",gap:12 }}>
+                <button
+                  onClick={() => navigate("/login")}
+                  style={{ width:"100%",padding:"12px",borderRadius:8,background:"#6366f1",color:"white",border:"none",fontWeight:600,fontSize:14,cursor:"pointer" }}>
+                  Go to Login
+                </button>
+                <button
+                  onClick={handleResend}
+                  disabled={resending}
+                  style={{ width:"100%",padding:"10px",borderRadius:8,background:"transparent",color:s.muted,border:`1px solid ${s.border}`,fontWeight:500,fontSize:13,cursor:resending?"not-allowed":"pointer",opacity:resending?0.6:1 }}>
+                  {resending ? "Resending Email..." : "Resend Verification Email"}
+                </button>
+              </div>
             </div>
           </div>
         </div>
