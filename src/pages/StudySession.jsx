@@ -70,65 +70,81 @@ export default function StudySession() {
     }
   }, [userData, topicId]);
 
-  useEffect(() => {
-    async function loadData() {
-      setLoading(true);
-      try {
-        const courseSnap = await getDoc(doc(db, "courses", courseId));
-        if (courseSnap.exists()) setCourse({ id: courseSnap.id, ...courseSnap.data() });
+  const loadNextProblem = async () => {
+    setLoading(true);
+    setSelected(null);
+    setSubmitted(false);
+    setShowResult(false);
+    setCodeResult(null);
+    setScore(null);
+    setIsRetry(false);
+    startTime.current = Date.now();
 
-        // ON LOAD - Get next problem in user's flow zone from backend Elo engine
-        let p = null;
-        let matchedToLevel = false;
+    try {
+      if (courseId) {
+        getDoc(doc(db, "courses", courseId)).then(snap => {
+          if (snap.exists()) setCourse({ id: snap.id, ...snap.data() });
+        });
+      }
+
+      let p = null;
+      let matchedToLevel = false;
+
+      if (currentUser?.uid && topicId) {
         try {
           const res = await fetch(`${process.env.REACT_APP_BACKEND_URL}/difficulty/next-problem/${currentUser.uid}/${topicId}`);
           if (res.ok) {
-            p = await res.json();
-            matchedToLevel = true;
-          } else {
-            console.warn("Backend problem selection error. Falling back to local query...");
+            const data = await res.json();
+            if (data && data.id) {
+              p = data;
+              matchedToLevel = true;
+            }
           }
         } catch (err) {
           console.warn("Backend unreachable, falling back to local query:", err);
         }
-
-        if (!p) {
-          const userSnap = await getDoc(doc(db, "users", currentUser.uid));
-          const level = userSnap.data()?.currentLevel || "easy";
-
-          const q = query(
-            collection(db, "problems"),
-            where("courseId", "==", courseId),
-            where("topicId", "==", topicId),
-            where("difficulty", "==", level)
-          );
-          const snap = await getDocs(q);
-          const problems = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-
-          if (problems.length > 0) {
-            p = problems[Math.floor(Math.random() * problems.length)];
-          } else {
-            const allQ = query(collection(db, "problems"), where("courseId", "==", courseId));
-            const allSnap = await getDocs(allQ);
-            const allProblems = allSnap.docs.map(d => ({ id: d.id, ...d.data() }));
-            if (allProblems.length > 0) {
-              p = allProblems[0];
-            }
-          }
-        }
-
-        if (p) {
-          setProblem(p);
-          setIsMatched(matchedToLevel);
-          if (p.type === "coding") setCode(p.starterCode || "# Write your code here\n");
-        }
-      } catch (e) {
-        console.error(e);
-        toast.error("Failed to load problem");
       }
+
+      if (!p || !p.id) {
+        let level = "easy";
+        if (currentUser?.uid) {
+          const userSnap = await getDoc(doc(db, "users", currentUser.uid));
+          if (userSnap.exists()) level = userSnap.data()?.currentLevel || "easy";
+        }
+
+        const allQ = query(collection(db, "problems"), where("courseId", "==", courseId || "python-basics"));
+        const allSnap = await getDocs(allQ);
+        const allProblems = allSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+
+        const targetNorm = (topicId || "").toLowerCase().replace(/^t0*/, "t");
+        const topicMatched = allProblems.filter(prob => {
+          const pNorm = (prob.topicId || "").toLowerCase().replace(/^t0*/, "t");
+          return pNorm === targetNorm || prob.topicId?.toLowerCase() === topicId?.toLowerCase();
+        });
+
+        const levelMatched = topicMatched.filter(prob => prob.difficulty === level);
+        const candidates = levelMatched.length > 0 ? levelMatched : topicMatched.length > 0 ? topicMatched : allProblems;
+
+        if (candidates.length > 0) {
+          p = candidates[Math.floor(Math.random() * candidates.length)];
+        }
+      }
+
+      if (p) {
+        setProblem(p);
+        setIsMatched(matchedToLevel);
+        if (p.type === "coding") setCode(p.starterCode || "# Write your code here\n");
+      }
+    } catch (e) {
+      console.error(e);
+      toast.error("Failed to load problem");
+    } finally {
       setLoading(false);
     }
-    loadData();
+  };
+
+  useEffect(() => {
+    loadNextProblem();
   }, [courseId, topicId, currentUser]);
 
   const callDifficultyUpdate = async (correct) => {
@@ -553,13 +569,17 @@ export default function StudySession() {
                       <div style={{ display: "flex", gap: 8 }}>
                         {score < 100 && !isRetry && (
                           <button onClick={handleRetry}
-                            style={{ flex: 1, padding: "9px", borderRadius: 8, background: "#6366f1", color: "white", border: "none", fontWeight: 600, fontSize: 13, cursor: "pointer" }}>
+                            style={{ flex: 1, padding: "9px", borderRadius: 8, background: "transparent", color: s.muted, border: `1px solid ${s.border}`, fontWeight: 600, fontSize: 13, cursor: "pointer" }}>
                             Try Again
                           </button>
                         )}
+                        <button onClick={loadNextProblem}
+                          style={{ flex: 1, padding: "9px", borderRadius: 8, background: "#6366f1", color: "white", border: "none", fontWeight: 600, fontSize: 13, cursor: "pointer" }}>
+                          Next Question
+                        </button>
                         <button onClick={() => navigate(`/roadmap/${courseId}`)}
-                          style={{ flex: 1, padding: "9px", borderRadius: 8, background: score === 100 ? "#6366f1" : "transparent", color: score === 100 ? "white" : s.muted, border: `1px solid ${s.border}`, fontWeight: 600, fontSize: 13, cursor: "pointer" }}>
-                          {score === 100 ? "Continue" : "Back to Roadmap"}
+                          style={{ flex: 1, padding: "9px", borderRadius: 8, background: "transparent", color: s.muted, border: `1px solid ${s.border}`, fontWeight: 600, fontSize: 13, cursor: "pointer" }}>
+                          Roadmap
                         </button>
                       </div>
                     </div>
