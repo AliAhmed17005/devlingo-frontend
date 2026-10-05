@@ -12,6 +12,7 @@ export default function Signup() {
   const [confirm, setConfirm] = useState("");
   const [loading, setLoading] = useState(false);
   const [resending, setResending] = useState(false);
+  const [verificationSent] = useState(false);
   const [error, setError] = useState("");
   const { isDark } = useTheme();
   const navigate = useNavigate();

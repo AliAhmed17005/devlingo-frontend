@@ -3,11 +3,11 @@ import { useParams, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { useTheme } from "../context/ThemeContext";
 import { db } from "../firebase/config";
-import { doc, getDoc, setDoc, updateDoc, arrayUnion, onSnapshot } from "firebase/firestore";
+import { doc, getDoc, setDoc, updateDoc, onSnapshot } from "firebase/firestore";
 import Layout from "../components/Layout";
 import { motion } from "framer-motion";
+import { COURSES_DATA } from "../firebase/seedData";
 import { dropCourse } from "../utils/helpers";
-import toast from "react-hot-toast";
 
 // ============ COURSE ONBOARDING ============
 export function CourseOnboarding() {
@@ -15,60 +15,51 @@ export function CourseOnboarding() {
   const { currentUser } = useAuth();
   const { isDark } = useTheme();
   const navigate = useNavigate();
-  const [course, setCourse] = useState(null);
-  const [loading, setLoading] = useState(false);
+
+  const activeCourseId = courseId || "python-basics";
+  const defaultCourse = COURSES_DATA.find(c => c.id === activeCourseId) || {
+    id: activeCourseId,
+    title: activeCourseId === "python-basics" ? "Python Basics" : activeCourseId,
+    description: "Learn programming step by step",
+    level: "Beginner"
+  };
+
+  const [course, setCourse] = useState(defaultCourse);
 
   const s = isDark
     ? { bg: "#0f1117", card: "#1a1f2e", border: "#2d3748", text: "#f0f4ff", muted: "#8892a4" }
     : { bg: "#f8fafc", card: "#ffffff", border: "#e2e8f0", text: "#0f172a", muted: "#64748b" };
 
   useEffect(() => {
-    getDoc(doc(db, "courses", courseId)).then(snap => {
+    getDoc(doc(db, "courses", activeCourseId)).then(snap => {
       if (snap.exists()) setCourse({ id: snap.id, ...snap.data() });
     }).catch(err => console.error("Error fetching course:", err));
-  }, [courseId]);
+  }, [activeCourseId]);
 
-  const enroll = async (isNew) => {
-    if (!currentUser) {
-      toast.error("Please sign in to enroll");
-      navigate("/login");
-      return;
-    }
-    setLoading(true);
-    try {
+  const enroll = (isNew) => {
+    // Instant navigation - 0ms delay!
+    if (isNew) navigate(`/roadmap/${activeCourseId}`);
+    else navigate(`/assessment/${activeCourseId}`);
+
+    // Update Firestore in background
+    if (currentUser) {
       const userRef = doc(db, "users", currentUser.uid);
-      const userSnap = await getDoc(userRef);
-      let enrolled = [];
-      if (userSnap.exists()) {
-        enrolled = userSnap.data().enrolledCourses || [];
-      }
-      const existing = enrolled.find(e => (e.courseId || e) === courseId);
-      if (!existing) {
-        enrolled.push({
-          courseId,
-          enrolledAt: new Date().toISOString(),
-          level: isNew ? "easy" : "pending",
-          completedTopics: []
-        });
-        await setDoc(userRef, { enrolledCourses: enrolled }, { merge: true });
-      }
-      toast.success(`Enrolled in ${course?.title || "course"}!`);
-      if (isNew) navigate(`/roadmap/${courseId}`);
-      else navigate(`/assessment/${courseId}`);
-    } catch (err) {
-      console.error("Enrollment error:", err);
-      if (isNew) navigate(`/roadmap/${courseId}`);
-      else navigate(`/assessment/${courseId}`);
-    } finally {
-      setLoading(false);
+      getDoc(userRef).then(snap => {
+        let enrolled = [];
+        if (snap.exists()) enrolled = snap.data().enrolledCourses || [];
+        const existing = enrolled.find(e => (e.courseId || e) === activeCourseId);
+        if (!existing) {
+          enrolled.push({
+            courseId: activeCourseId,
+            enrolledAt: new Date().toISOString(),
+            level: isNew ? "easy" : "pending",
+            completedTopics: []
+          });
+          setDoc(userRef, { enrolledCourses: enrolled }, { merge: true });
+        }
+      }).catch(err => console.warn("Background enroll update error:", err));
     }
   };
-
-  if (!course) return (
-    <div style={{ minHeight: "100vh", background: s.bg, display: "flex", alignItems: "center", justifyContent: "center" }}>
-      <p style={{ color: s.muted, fontSize: 14 }}>Loading...</p>
-    </div>
-  );
 
   return (
     <motion.div
@@ -83,13 +74,13 @@ export function CourseOnboarding() {
           <p style={{ color: s.muted, fontSize: 14 }}>Choose your experience level to personalize your path</p>
         </div>
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-          <button onClick={() => enroll(true)} disabled={loading}
+          <button onClick={() => enroll(true)}
             className="card-hover"
             style={{ background: s.card, border: `1px solid ${s.border}`, borderRadius: 10, padding: 20, textAlign: "left", cursor: "pointer", width: "100%" }}>
             <p style={{ fontWeight: 600, fontSize: 15, color: s.text, margin: "0 0 4px" }}>I'm new to this</p>
             <p style={{ color: s.muted, fontSize: 13, margin: 0 }}>Start from the beginning with a beginner plan</p>
           </button>
-          <button onClick={() => enroll(false)} disabled={loading}
+          <button onClick={() => enroll(false)}
             className="card-hover"
             style={{ background: s.card, border: `1px solid ${s.border}`, borderRadius: 10, padding: 20, textAlign: "left", cursor: "pointer", width: "100%" }}>
             <p style={{ fontWeight: 600, fontSize: 15, color: s.text, margin: "0 0 4px" }}>I know the basics</p>
