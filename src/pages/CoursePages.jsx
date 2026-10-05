@@ -38,11 +38,11 @@ export function CourseOnboarding() {
 
   const enroll = (isNew) => {
     // Instant navigation - 0ms delay!
-    if (isNew) navigate(`/roadmap/${activeCourseId}`);
-    else navigate(`/assessment/${activeCourseId}`);
+    const targetPath = isNew ? `/roadmap/${activeCourseId}` : `/assessment/${activeCourseId}`;
+    navigate(targetPath);
 
     // Update Firestore in background
-    if (currentUser) {
+    if (currentUser?.uid) {
       const userRef = doc(db, "users", currentUser.uid);
       getDoc(userRef).then(snap => {
         let enrolled = [];
@@ -70,22 +70,24 @@ export function CourseOnboarding() {
     >
       <div style={{ maxWidth: 500, width: "100%" }}>
         <div style={{ marginBottom: 28 }}>
-          <h1 style={{ fontWeight: 600, fontSize: 22, color: s.text, margin: "0 0 6px" }}>Enroll in {course.title}</h1>
+          <h1 style={{ fontWeight: 600, fontSize: 22, color: s.text, margin: "0 0 6px" }}>Enroll in {course?.title || "Python Basics"}</h1>
           <p style={{ color: s.muted, fontSize: 14 }}>Choose your experience level to personalize your path</p>
         </div>
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-          <button onClick={() => enroll(true)}
+          <div
+            onClick={() => enroll(true)}
             className="card-hover"
-            style={{ background: s.card, border: `1px solid ${s.border}`, borderRadius: 10, padding: 20, textAlign: "left", cursor: "pointer", width: "100%" }}>
-            <p style={{ fontWeight: 600, fontSize: 15, color: s.text, margin: "0 0 4px" }}>I'm new to this</p>
-            <p style={{ color: s.muted, fontSize: 13, margin: 0 }}>Start from the beginning with a beginner plan</p>
-          </button>
-          <button onClick={() => enroll(false)}
+            style={{ background: s.card, border: `1px solid ${s.border}`, borderRadius: 10, padding: 20, textAlign: "left", cursor: "pointer", width: "100%", userSelect: "none" }}>
+            <p style={{ fontWeight: 600, fontSize: 15, color: s.text, margin: "0 0 4px", pointerEvents: "none" }}>I'm new to this</p>
+            <p style={{ color: s.muted, fontSize: 13, margin: 0, pointerEvents: "none" }}>Start from the beginning with a beginner plan</p>
+          </div>
+          <div
+            onClick={() => enroll(false)}
             className="card-hover"
-            style={{ background: s.card, border: `1px solid ${s.border}`, borderRadius: 10, padding: 20, textAlign: "left", cursor: "pointer", width: "100%" }}>
-            <p style={{ fontWeight: 600, fontSize: 15, color: s.text, margin: "0 0 4px" }}>I know the basics</p>
-            <p style={{ color: s.muted, fontSize: 13, margin: 0 }}>Take an assessment to find your starting point</p>
-          </button>
+            style={{ background: s.card, border: `1px solid ${s.border}`, borderRadius: 10, padding: 20, textAlign: "left", cursor: "pointer", width: "100%", userSelect: "none" }}>
+            <p style={{ fontWeight: 600, fontSize: 15, color: s.text, margin: "0 0 4px", pointerEvents: "none" }}>I know the basics</p>
+            <p style={{ color: s.muted, fontSize: 13, margin: 0, pointerEvents: "none" }}>Take an assessment to find your starting point</p>
+          </div>
         </div>
         <button onClick={() => navigate("/courses")}
           style={{ width: "100%", marginTop: 14, padding: "10px", background: "transparent", border: "none", color: s.muted, cursor: "pointer", fontSize: 13 }}>
@@ -102,7 +104,11 @@ export function Assessment() {
   const { currentUser } = useAuth();
   const { isDark } = useTheme();
   const navigate = useNavigate();
-  const [course, setCourse] = useState(null);
+
+  const activeCourseId = courseId || "python-basics";
+  const defaultCourse = COURSES_DATA.find(c => c.id === activeCourseId) || COURSES_DATA[0];
+
+  const [course, setCourse] = useState(defaultCourse);
   const [current, setCurrent] = useState(0);
   const [answers, setAnswers] = useState({});
   const [done, setDone] = useState(false);
@@ -113,10 +119,12 @@ export function Assessment() {
     : { bg: "#f8fafc", card: "#ffffff", border: "#e2e8f0", text: "#0f172a", muted: "#64748b" };
 
   useEffect(() => {
-    getDoc(doc(db, "courses", courseId)).then(snap => {
-      if (snap.exists()) setCourse({ id: snap.id, ...snap.data() });
-    });
-  }, [courseId]);
+    getDoc(doc(db, "courses", activeCourseId)).then(snap => {
+      if (snap.exists() && snap.data().assessmentQuestions?.length > 0) {
+        setCourse({ id: snap.id, ...snap.data() });
+      }
+    }).catch(err => console.error("Error fetching assessment course:", err));
+  }, [activeCourseId]);
 
   const questions = course?.assessmentQuestions || [];
   const progress = questions.length ? ((current / questions.length) * 100) : 0;
@@ -131,11 +139,17 @@ export function Assessment() {
       const assignedLevel = pct <= 40 ? "easy" : pct <= 70 ? "medium" : "hard";
       setLevel(assignedLevel);
       setDone(true);
-      await updateDoc(doc(db, "users", currentUser.uid), { currentLevel: assignedLevel });
+      if (currentUser?.uid) {
+        await updateDoc(doc(db, "users", currentUser.uid), { currentLevel: assignedLevel });
+      }
     }
   };
 
-  if (!course) return <div style={{ minHeight: "100vh", background: s.bg, display: "flex", alignItems: "center", justifyContent: "center", color: s.muted }}>Loading...</div>;
+  if (!course || !questions.length) return (
+    <div style={{ minHeight: "100vh", background: s.bg, display: "flex", alignItems: "center", justifyContent: "center", color: s.muted }}>
+      Loading assessment...
+    </div>
+  );
 
   if (done) return (
     <motion.div
@@ -156,7 +170,7 @@ export function Assessment() {
             {level === "easy" ? "Strong foundation first" : level === "medium" ? "Building on your knowledge" : "Advanced challenges ahead"}
           </p>
         </div>
-        <button onClick={() => navigate(`/roadmap/${courseId}`)}
+        <button onClick={() => navigate(`/roadmap/${activeCourseId}`)}
           style={{ width: "100%", padding: "10px", borderRadius: 8, background: "#6366f1", color: "white", border: "none", fontWeight: 600, fontSize: 14, cursor: "pointer" }}>
           Start Course
         </button>
@@ -223,7 +237,11 @@ export function CourseRoadmap() {
   const { currentUser } = useAuth();
   const { isDark } = useTheme();
   const navigate = useNavigate();
-  const [course, setCourse] = useState(null);
+
+  const activeCourseId = courseId || "python-basics";
+  const defaultCourse = COURSES_DATA.find(c => c.id === activeCourseId) || COURSES_DATA[0];
+
+  const [course, setCourse] = useState(defaultCourse);
   const [userData, setUserData] = useState(null);
   const [skillRatings, setSkillRatings] = useState([]);
 
@@ -232,14 +250,16 @@ export function CourseRoadmap() {
     : { card: "#ffffff", border: "#e2e8f0", text: "#0f172a", muted: "#64748b", bg: "#f8fafc" };
 
   useEffect(() => {
-    getDoc(doc(db, "courses", courseId)).then(snap => {
-      if (snap.exists()) setCourse({ id: snap.id, ...snap.data() });
+    getDoc(doc(db, "courses", activeCourseId)).then(snap => {
+      if (snap.exists() && snap.data().topics?.length > 0) {
+        setCourse({ id: snap.id, ...snap.data() });
+      }
     }).catch(err => console.error("Error fetching course:", err));
     if (!currentUser) return;
     return onSnapshot(doc(db, "users", currentUser.uid), snap => {
       if (snap.exists()) setUserData(snap.data());
     });
-  }, [courseId, currentUser]);
+  }, [activeCourseId, currentUser]);
 
   useEffect(() => {
     if (!currentUser) return;
@@ -258,208 +278,198 @@ export function CourseRoadmap() {
       });
   }, [currentUser]);
 
-  const enrollment = userData?.enrolledCourses?.find(e => (e.courseId || e) === courseId);
+  const enrollment = userData?.enrolledCourses?.find(e => (e.courseId || e) === activeCourseId);
   const completedTopics = enrollment?.completedTopics || [];
-  const topics = course?.topics || [];
+  const topics = course?.topics || defaultCourse.topics || [];
   const completedCount = completedTopics.length;
   const progressPct = topics.length ? Math.round((completedCount / topics.length) * 100) : 0;
   const currentTopicIndex = completedCount < topics.length ? completedCount : topics.length - 1;
 
   return (
     <Layout title="Roadmap">
-      {!course ? (
-        <div style={{ textAlign: "center", padding: 40, color: s.muted }}>Loading...</div>
-      ) : (
-        <div style={{ maxWidth: 800, margin: "0 auto" }}>
-          {/* Course header */}
-          <div style={{ marginBottom: 20 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 8 }}>
-              <div>
-                <h2 style={{ fontWeight: 600, fontSize: 18, color: s.text, margin: "0 0 4px" }}>{course.title}</h2>
-                <p style={{ color: s.muted, fontSize: 13, margin: 0 }}>
-                  {course.level} · {course.lessons} Lessons · {course.weeks} Weeks
-                </p>
-              </div>
-              <button onClick={async () => {
-                if (window.confirm(`Are you sure you want to drop ${course.title}?`)) {
-                  await dropCourse(currentUser.uid, course.id);
-                  navigate("/dashboard");
-                }
-              }} style={{ padding: "6px 12px", borderRadius: 8, background: "rgba(239,68,68,0.1)", color: "#ef4444", border: "none", fontWeight: 600, fontSize: 12, cursor: "pointer", transition: "all 0.2s" }}>
-                Drop Course
-              </button>
+      <div style={{ maxWidth: 800, margin: "0 auto" }}>
+        {/* Course header */}
+        <div style={{ marginBottom: 20 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 8 }}>
+            <div>
+              <h2 style={{ fontWeight: 600, fontSize: 18, color: s.text, margin: "0 0 4px" }}>{course?.title || "Python Basics"}</h2>
+              <p style={{ color: s.muted, fontSize: 13, margin: 0 }}>
+                {course?.level || "Beginner"} · {course?.lessons || 24} Lessons · {course?.weeks || 6} Weeks
+              </p>
             </div>
-            <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 12 }}>
-              <div style={{ flex: 1, height: 4, background: s.border, borderRadius: 4, overflow: "hidden" }}>
-                <div style={{ width: `${progressPct}%`, height: "100%", background: "#6366f1", borderRadius: 4 }} />
-              </div>
-              <span style={{ fontSize: 13, fontWeight: 600, color: "#6366f1" }}>{progressPct}%</span>
-            </div>
+            <button onClick={async () => {
+              if (window.confirm(`Are you sure you want to drop ${course?.title}?`)) {
+                await dropCourse(currentUser.uid, course.id);
+                navigate("/dashboard");
+              }
+            }} style={{ padding: "6px 12px", borderRadius: 8, background: "rgba(239,68,68,0.1)", color: "#ef4444", border: "none", fontWeight: 600, fontSize: 12, cursor: "pointer", transition: "all 0.2s" }}>
+              Drop Course
+            </button>
           </div>
-
-          {/* Stats */}
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 12, marginBottom: 20 }}>
-            <div style={{ background: s.card, border: `1px solid ${s.border}`, borderRadius: 10, padding: "12px 14px", borderLeft: "3px solid #6366f1" }}>
-              <p style={{ fontWeight: 600, fontSize: 18, color: s.text, margin: "0 0 1px" }}>{progressPct}%</p>
-              <p style={{ fontSize: 11, color: s.muted, margin: 0 }}>Progress</p>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 12 }}>
+            <div style={{ flex: 1, height: 4, background: s.border, borderRadius: 4, overflow: "hidden" }}>
+              <div style={{ width: `${progressPct}%`, height: "100%", background: "#6366f1", borderRadius: 4 }} />
             </div>
-            <div style={{ background: s.card, border: `1px solid ${s.border}`, borderRadius: 10, padding: "12px 14px", borderLeft: "3px solid #f59e0b" }}>
-              <p style={{ fontWeight: 600, fontSize: 18, color: s.text, margin: "0 0 1px" }}>{userData?.totalPoints || 0}</p>
-              <p style={{ fontSize: 11, color: s.muted, margin: 0 }}>Total XP</p>
-            </div>
-            <div style={{ background: s.card, border: `1px solid ${s.border}`, borderRadius: 10, padding: "12px 14px", borderLeft: "3px solid #10b981" }}>
-              <p style={{ fontWeight: 600, fontSize: 18, color: s.text, margin: "0 0 1px" }}>{completedCount}/{topics.length}</p>
-              <p style={{ fontSize: 11, color: s.muted, margin: 0 }}>Topics</p>
-            </div>
+            <span style={{ fontSize: 13, fontWeight: 600, color: "#6366f1" }}>{progressPct}%</span>
           </div>
+        </div>
 
-          {/* Current task */}
-          {topics[currentTopicIndex] && (
-            <div style={{ background: s.card, border: `1px solid ${s.border}`, borderRadius: 10, padding: 16, marginBottom: 20 }}>
-              <p style={{ color: s.muted, fontSize: 10, fontWeight: 600, letterSpacing: 0.8, margin: "0 0 6px", textTransform: "uppercase" }}>Current Topic</p>
-              <p style={{ fontWeight: 600, fontSize: 15, color: s.text, margin: "0 0 4px" }}>{topics[currentTopicIndex].title}</p>
-              <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
-                <span style={{ fontSize: 11, color: "#10b981" }}>+{topics[currentTopicIndex].xp} XP</span>
-                <span style={{ fontSize: 11, color: s.muted }}>~20 mins</span>
-              </div>
-              <button onClick={() => navigate(`/study/${courseId}/${topics[currentTopicIndex].id}`)}
-                style={{ padding: "8px 18px", borderRadius: 8, background: "#6366f1", color: "white", border: "none", fontWeight: 600, fontSize: 13, cursor: "pointer" }}>
-                Start
-              </button>
+        {/* Stats */}
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 12, marginBottom: 20 }}>
+          <div style={{ background: s.card, border: `1px solid ${s.border}`, borderRadius: 10, padding: "12px 14px", borderLeft: "3px solid #6366f1" }}>
+            <p style={{ fontWeight: 600, fontSize: 18, color: s.text, margin: "0 0 1px" }}>{progressPct}%</p>
+            <p style={{ fontSize: 11, color: s.muted, margin: 0 }}>Progress</p>
+          </div>
+          <div style={{ background: s.card, border: `1px solid ${s.border}`, borderRadius: 10, padding: "12px 14px", borderLeft: "3px solid #f59e0b" }}>
+            <p style={{ fontWeight: 600, fontSize: 18, color: s.text, margin: "0 0 1px" }}>{userData?.totalPoints || 0}</p>
+            <p style={{ fontSize: 11, color: s.muted, margin: 0 }}>Total XP</p>
+          </div>
+          <div style={{ background: s.card, border: `1px solid ${s.border}`, borderRadius: 10, padding: "12px 14px", borderLeft: "3px solid #10b981" }}>
+            <p style={{ fontWeight: 600, fontSize: 18, color: s.text, margin: "0 0 1px" }}>{completedCount}/{topics.length}</p>
+            <p style={{ fontSize: 11, color: s.muted, margin: 0 }}>Topics</p>
+          </div>
+        </div>
+
+        {/* Current task */}
+        {topics[currentTopicIndex] && (
+          <div style={{ background: s.card, border: `1px solid ${s.border}`, borderRadius: 10, padding: 16, marginBottom: 20 }}>
+            <p style={{ color: s.muted, fontSize: 10, fontWeight: 600, letterSpacing: 0.8, margin: "0 0 6px", textTransform: "uppercase" }}>Current Topic</p>
+            <p style={{ fontWeight: 600, fontSize: 15, color: s.text, margin: "0 0 4px" }}>{topics[currentTopicIndex].title}</p>
+            <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+              <span style={{ fontSize: 11, color: "#10b981" }}>+{topics[currentTopicIndex].xp} XP</span>
+              <span style={{ fontSize: 11, color: s.muted }}>~20 mins</span>
             </div>
-          )}
+            <button onClick={() => navigate(`/study/${activeCourseId}/${topics[currentTopicIndex].id}`)}
+              style={{ padding: "8px 18px", borderRadius: 8, background: "#6366f1", color: "white", border: "none", fontWeight: 600, fontSize: 13, cursor: "pointer" }}>
+              Start
+            </button>
+          </div>
+        )}
 
-          {/* Roadmap timeline */}
-          <div>
-            <p style={{ fontWeight: 600, fontSize: 15, color: s.text, margin: "0 0 14px" }}>Learning Path</p>
-            <div style={{ position: "relative", paddingLeft: 36 }}>
-              <div style={{ position: "absolute", left: 12, top: 0, bottom: 0, width: 2, background: s.border }} />
+        {/* Roadmap timeline */}
+        <div>
+          <p style={{ fontWeight: 600, fontSize: 15, color: s.text, margin: "0 0 14px" }}>Learning Path</p>
+          <div style={{ position: "relative", paddingLeft: 36 }}>
+            <div style={{ position: "absolute", left: 12, top: 0, bottom: 0, width: 2, background: s.border }} />
 
-              {topics.map((topic, i) => {
-                const isComplete = completedTopics.includes(topic.id);
-                const isCurrent = i === currentTopicIndex;
+            {topics.map((topic, i) => {
+              const isComplete = completedTopics.includes(topic.id);
+              const isCurrent = i === currentTopicIndex;
+
+              return (
+                <div key={topic.id} style={{ position: "relative", marginBottom: 10 }}>
+                  <div style={{
+                    position: "absolute", left: -36, top: 12,
+                    width: 24, height: 24, borderRadius: "50%",
+                    background: isComplete ? "#10b981" : isCurrent ? "#6366f1" : s.card,
+                    border: `2px solid ${isComplete ? "#10b981" : isCurrent ? "#6366f1" : s.border}`,
+                    display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1
+                  }}>
+                    <span style={{ fontSize: 10, color: isComplete || isCurrent ? "white" : s.muted }}>
+                      {isComplete ? "✓" : i + 1}
+                    </span>
+                  </div>
+
+                  <div style={{
+                    background: s.card, border: `1px solid ${isCurrent ? "#6366f1" : s.border}`,
+                    borderRadius: 8, padding: "10px 14px", display: "flex", alignItems: "center", justifyContent: "space-between",
+                    opacity: 1, cursor: "pointer"
+                  }}
+                    onClick={() => navigate(`/study/${activeCourseId}/${topic.id}`)}>
+                    <div>
+                      {isCurrent && <span style={{ fontSize: 10, color: "#6366f1", fontWeight: 500 }}>Current</span>}
+                      <p style={{ fontWeight: 500, fontSize: 14, color: s.text, margin: 0 }}>{topic.title}</p>
+                      {isComplete && <p style={{ fontSize: 11, color: "#10b981", margin: "1px 0 0" }}>Completed</p>}
+                    </div>
+                    <span style={{ fontSize: 11, color: s.muted }}>+{topic.xp} XP</span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Skill Ratings Visualization */}
+        {skillRatings.length > 0 && (
+          <div style={{
+            background: s.card,
+            border: `1px solid ${s.border}`,
+            borderRadius: 10,
+            padding: 20,
+            marginTop: 30,
+            marginBottom: 10
+          }}>
+            <h3 style={{ fontWeight: 600, fontSize: 15, color: s.text, margin: "0 0 4px" }}>
+              Your Skill Ratings per Topic
+            </h3>
+            <p style={{ fontSize: 12, color: s.muted, margin: "0 0 20px" }}>
+              1000 = baseline · Above 1000 = stronger than average problems on this topic · Updates after every problem you solve
+            </p>
+
+            <div style={{ display: "flex", flexDirection: "column", gap: 16, paddingTop: 12 }}>
+              {skillRatings.map((ratingObj, idx) => {
+                const rating = ratingObj.rating;
+                const name = ratingObj.name;
+                
+                const percent = Math.min((rating / 1400) * 100, 100);
+                
+                let barColor = "#6366f1";
+                if (rating > 1050) barColor = "#10b981";
+                else if (rating < 950) barColor = "#ef4444";
+
+                const baselinePct = (1000 / 1400) * 100;
 
                 return (
-                  <div key={topic.id} style={{ position: "relative", marginBottom: 10 }}>
-                    <div style={{
-                      position: "absolute", left: -36, top: 12,
-                      width: 24, height: 24, borderRadius: "50%",
-                      background: isComplete ? "#10b981" : isCurrent ? "#6366f1" : s.card,
-                      border: `2px solid ${isComplete ? "#10b981" : isCurrent ? "#6366f1" : s.border}`,
-                      display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1
-                    }}>
-                      <span style={{ fontSize: 10, color: isComplete || isCurrent ? "white" : s.muted }}>
-                        {isComplete ? "✓" : i + 1}
-                      </span>
+                  <div key={idx} style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                    <span style={{ fontWeight: 500, color: s.text, width: 140, flexShrink: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {name}
+                    </span>
+                    
+                    <div style={{ position: "relative", flex: 1, height: 16, background: isDark ? "#2d3748" : "#e2e8f0", borderRadius: 4 }}>
+                      <div style={{
+                        width: `${percent}%`,
+                        height: "100%",
+                        background: barColor,
+                        borderRadius: percent >= 100 ? "4px" : "4px 0 0 4px",
+                        transition: "width 0.4s"
+                      }} />
+                      
+                      <div style={{
+                        position: "absolute",
+                        left: `${baselinePct}%`,
+                        top: 0,
+                        bottom: 0,
+                        width: 2,
+                        background: isDark ? "#ffffff" : "#000000",
+                        opacity: 0.35,
+                        zIndex: 2
+                      }} />
+                      
+                      {idx === 0 && (
+                        <div style={{
+                          position: "absolute",
+                          left: `${baselinePct}%`,
+                          top: -16,
+                          transform: "translateX(-50%)",
+                          fontSize: 9,
+                          fontWeight: 500,
+                          color: s.muted
+                        }}>
+                          baseline
+                        </div>
+                      )}
                     </div>
-
-                    <div style={{
-                      background: s.card, border: `1px solid ${isCurrent ? "#6366f1" : s.border}`,
-                      borderRadius: 8, padding: "10px 14px", display: "flex", alignItems: "center", justifyContent: "space-between",
-                      opacity: 1, cursor: "pointer"
-                    }}
-                      onClick={() => navigate(`/study/${courseId}/${topic.id}`)}>
-                      <div>
-                        {isCurrent && <span style={{ fontSize: 10, color: "#6366f1", fontWeight: 500 }}>Current</span>}
-                        <p style={{ fontWeight: 500, fontSize: 14, color: s.text, margin: 0 }}>{topic.title}</p>
-                        {isComplete && <p style={{ fontSize: 11, color: "#10b981", margin: "1px 0 0" }}>Completed</p>}
-                      </div>
-                      <span style={{ fontSize: 11, color: s.muted }}>+{topic.xp} XP</span>
-                    </div>
+                    
+                    <span style={{ fontWeight: 600, color: barColor, width: 50, textAlign: "right", flexShrink: 0 }}>
+                      {Math.round(rating)}
+                    </span>
                   </div>
                 );
               })}
             </div>
           </div>
-
-          {/* Skill Ratings Visualization */}
-          {skillRatings.length > 0 && (
-            <div style={{
-              background: s.card,
-              border: `1px solid ${s.border}`,
-              borderRadius: 10,
-              padding: 20,
-              marginTop: 30,
-              marginBottom: 10
-            }}>
-              <h3 style={{ fontWeight: 600, fontSize: 15, color: s.text, margin: "0 0 4px" }}>
-                Your Skill Ratings per Topic
-              </h3>
-              <p style={{ fontSize: 12, color: s.muted, margin: "0 0 20px" }}>
-                1000 = baseline · Above 1000 = stronger than average problems on this topic · Updates after every problem you solve
-              </p>
-
-              <div style={{ display: "flex", flexDirection: "column", gap: 16, paddingTop: 12 }}>
-                {skillRatings.map((ratingObj, idx) => {
-                  const rating = ratingObj.rating;
-                  const name = ratingObj.name;
-                  
-                  // Bar width as percentage of 1400 (max expected rating)
-                  const percent = Math.min((rating / 1400) * 100, 100);
-                  
-                  // Bar fill color: green if rating > 1050, indigo if 950-1050, red if below 950
-                  let barColor = "#6366f1"; // Indigo
-                  if (rating > 1050) barColor = "#10b981"; // Green
-                  else if (rating < 950) barColor = "#ef4444"; // Red
-
-                  // Baseline marker at 1000 position
-                  const baselinePct = (1000 / 1400) * 100;
-
-                  return (
-                    <div key={idx} style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                      <span style={{ fontWeight: 500, color: s.text, width: 140, flexShrink: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                        {name}
-                      </span>
-                      
-                      <div style={{ position: "relative", flex: 1, height: 16, background: isDark ? "#2d3748" : "#e2e8f0", borderRadius: 4 }}>
-                        {/* Bar fill */}
-                        <div style={{
-                          width: `${percent}%`,
-                          height: "100%",
-                          background: barColor,
-                          borderRadius: percent >= 100 ? "4px" : "4px 0 0 4px",
-                          transition: "width 0.4s"
-                        }} />
-                        
-                        {/* Baseline line */}
-                        <div style={{
-                          position: "absolute",
-                          left: `${baselinePct}%`,
-                          top: 0,
-                          bottom: 0,
-                          width: 2,
-                          background: isDark ? "#ffffff" : "#000000",
-                          opacity: 0.35,
-                          zIndex: 2
-                        }} />
-                        
-                        {/* Baseline label */}
-                        {idx === 0 && (
-                          <div style={{
-                            position: "absolute",
-                            left: `${baselinePct}%`,
-                            top: -16,
-                            transform: "translateX(-50%)",
-                            fontSize: 9,
-                            fontWeight: 500,
-                            color: s.muted
-                          }}>
-                            baseline
-                          </div>
-                        )}
-                      </div>
-                      
-                      <span style={{ fontWeight: 600, color: barColor, width: 50, textAlign: "right", flexShrink: 0 }}>
-                        {Math.round(rating)}
-                      </span>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-        </div>
-      )}
+        )}
+      </div>
     </Layout>
   );
 }
