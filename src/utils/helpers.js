@@ -501,28 +501,26 @@ export async function askAI(userMessage, history, context) {
       console.warn("OpenAI API failed, trying Gemini fallback:", oe);
       if (hasGemini) {
         try {
-          return await askGeminiAPI(userMessage, history, context, geminiKey, "gemini-3.6-flash");
+          return await askGeminiAPI(userMessage, history, context, geminiKey, "gemini-2.0-flash");
         } catch (ge) {
-          console.warn("Gemini fallback failed, trying Gemini 3.5 Flash:", ge);
+          console.warn("Gemini fallback failed, trying Gemini 1.5 Flash:", ge);
           try {
-            return await askGeminiAPI(userMessage, history, context, geminiKey, "gemini-3.5-flash");
+            return await askGeminiAPI(userMessage, history, context, geminiKey, "gemini-1.5-flash");
           } catch (ge15) {
             console.error("All AI services failed:", ge15);
           }
         }
       }
-      toast.error("AI quota exceeded. Offline Sandbox Mode activated.", { id: "ai-status" });
       return getMockAriaResponse(userMessage);
     }
   } else if (hasGemini) {
     try {
-      return await askGeminiAPI(userMessage, history, context, geminiKey, "gemini-3.6-flash");
+      return await askGeminiAPI(userMessage, history, context, geminiKey, "gemini-2.0-flash");
     } catch (e) {
       try {
-        return await askGeminiAPI(userMessage, history, context, geminiKey, "gemini-3.5-flash");
+        return await askGeminiAPI(userMessage, history, context, geminiKey, "gemini-1.5-flash");
       } catch (e15) {
         console.error("Gemini failed:", e15);
-        toast.error("Gemini failed. Offline Sandbox Mode activated.", { id: "ai-status" });
         return getMockAriaResponse(userMessage);
       }
     }
