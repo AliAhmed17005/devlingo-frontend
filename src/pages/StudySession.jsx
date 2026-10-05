@@ -143,6 +143,7 @@ export default function StudySession() {
     }
   };
 
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     loadNextProblem();
   }, [courseId, topicId, currentUser]);
