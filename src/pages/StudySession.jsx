@@ -488,17 +488,17 @@ export default function StudySession() {
               ) : (
                 <>
                   <p style={{ fontWeight: 600, fontSize: 15, color: s.text, margin: "0 0 14px", lineHeight: 1.6 }}>
-                    {problem.description?.split("```")[0]}
+                    {problem.question || (problem.description?.split("```")[0])}
                   </p>
 
-                  {problem.description?.includes("```") && (
+                  {(problem.referenceSolution || problem.description?.includes("```")) && (
                     <pre style={{ background: "#0d1117", border: `1px solid ${s.border}`, borderRadius: 6, padding: 12, fontFamily: "monospace", fontSize: 13, color: "#e2e8f0", overflowX: "auto", marginBottom: 16, lineHeight: 1.6 }}>
-                      {problem.description.split("```")[1]?.replace(/python\n?/, "")}
+                      {problem.referenceSolution || problem.description?.split("```")[1]?.replace(/python\n?/, "")}
                     </pre>
                   )}
 
                   {/* MCQ Options */}
-                  {problem.type === "mcq" && !showResult && (
+                  {(problem.type !== "coding" || problem.options?.length > 0) && !showResult && (
                     <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 4 }}>
                       {problem.options?.map((opt, i) => {
                         const isSelected = selected === i;
@@ -508,7 +508,7 @@ export default function StudySession() {
                             <span style={{ width: 24, height: 24, borderRadius: "50%", background: isSelected ? "#6366f1" : s.border, color: isSelected ? "white" : s.muted, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 600, fontSize: 12, flexShrink: 0 }}>
                               {["A","B","C","D"][i]}
                             </span>
-                            <span style={{ fontFamily: opt.includes("def ") || opt.includes("range") || opt.includes("[") ? "monospace" : "inherit" }}>{opt}</span>
+                            <span style={{ fontFamily: String(opt).includes("def ") || String(opt).includes("range") || String(opt).includes("[") ? "monospace" : "inherit" }}>{opt}</span>
                           </button>
                         );
                       })}
@@ -522,7 +522,7 @@ export default function StudySession() {
                   )}
 
                   {/* MCQ Result */}
-                  {showResult && problem.type === "mcq" && (
+                  {showResult && (problem.type !== "coding" || problem.options?.length > 0) && (
                     <div style={{ marginTop: 6 }}>
                       <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 14 }}>
                         {problem.options?.map((opt, i) => {

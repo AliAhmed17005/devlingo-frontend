@@ -13,7 +13,6 @@ export default function Signup() {
   const [loading, setLoading] = useState(false);
   const [resending, setResending] = useState(false);
   const [error, setError] = useState("");
-  const [verificationSent, setVerificationSent] = useState(false);
   const { isDark } = useTheme();
   const navigate = useNavigate();
 
@@ -61,13 +60,9 @@ export default function Signup() {
     setLoading(true);
 
     try {
-      const res = await signup(email, password, fullName);
-      if (res && res.emailSent === false) {
-        toast.error("Account created! Verification email could not be sent automatically. Click 'Resend Verification Email' below.");
-      } else {
-        toast.success("Account created successfully!");
-      }
-      setVerificationSent(true);
+      await signup(email, password, fullName);
+      toast.success("Account created successfully! Welcome to DevLingo.");
+      navigate("/dashboard");
     } catch (err) {
       if (err.code === "auth/email-already-in-use") {
         setError("This email is already registered. If you need a verification email, click Sign in or try logging in.");

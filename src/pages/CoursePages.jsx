@@ -322,7 +322,6 @@ export function CourseRoadmap() {
               {topics.map((topic, i) => {
                 const isComplete = completedTopics.includes(topic.id);
                 const isCurrent = i === currentTopicIndex;
-                const isLocked = !isComplete && !isCurrent;
 
                 return (
                   <div key={topic.id} style={{ position: "relative", marginBottom: 10 }}>
@@ -334,16 +333,16 @@ export function CourseRoadmap() {
                       display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1
                     }}>
                       <span style={{ fontSize: 10, color: isComplete || isCurrent ? "white" : s.muted }}>
-                        {isComplete ? "✓" : isCurrent ? i + 1 : i + 1}
+                        {isComplete ? "✓" : i + 1}
                       </span>
                     </div>
 
                     <div style={{
                       background: s.card, border: `1px solid ${isCurrent ? "#6366f1" : s.border}`,
                       borderRadius: 8, padding: "10px 14px", display: "flex", alignItems: "center", justifyContent: "space-between",
-                      opacity: isLocked ? 0.5 : 1, cursor: !isLocked ? "pointer" : "default"
+                      opacity: 1, cursor: "pointer"
                     }}
-                      onClick={() => !isLocked && navigate(`/study/${courseId}/${topic.id}`)}>
+                      onClick={() => navigate(`/study/${courseId}/${topic.id}`)}>
                       <div>
                         {isCurrent && <span style={{ fontSize: 10, color: "#6366f1", fontWeight: 500 }}>Current</span>}
                         <p style={{ fontWeight: 500, fontSize: 14, color: s.text, margin: 0 }}>{topic.title}</p>

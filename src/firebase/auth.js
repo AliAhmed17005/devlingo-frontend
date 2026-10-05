@@ -32,19 +32,26 @@ export async function signup(email, password, name) {
 
   const tagId = "DV-" + Math.random().toString(36).substr(2, 6).toUpperCase()
 
+  const todayStr = new Date().toISOString().split("T")[0];
+
   await setDoc(doc(db, "users", cred.user.uid), {
     name:            name.trim(),
     email:           email.toLowerCase().trim(),
     tagId:           tagId,
-    emailVerified:   false,
+    emailVerified:   true,
     username:        "@" + name.trim().toLowerCase().replace(/\s+/g, "_"),
-    totalPoints:     0,
-    currentStreak:   0,
+    totalPoints:     50,
+    currentStreak:   1,
+    lastActiveDate:  todayStr,
     currentLevel:    "easy",
-    lastActiveDate:  null,
     consecutivePasses: 0,
-    achievements:    [],
-    enrolledCourses: [{ courseId: "python-basics", enrolledAt: new Date().toISOString() }],
+    achievements:    ["first_blood"],
+    enrolledCourses: [{ courseId: "python-basics", enrolledAt: new Date().toISOString(), level: "easy", completedTopics: [] }],
+    skillRatings: {
+      T01: 1000, T02: 1000, T03: 1000, T04: 1000, T05: 1000,
+      T06: 1000, T07: 1000, T08: 1000, T09: 1000, T10: 1000,
+      T11: 1000, T12: 1000, T13: 1000, T14: 1000, T15: 1000
+    },
     bio:             "",
     location:        "",
     website:         "",
@@ -63,26 +70,14 @@ export async function signup(email, password, name) {
     createdAt:  serverTimestamp()
   })
 
-  let emailSent = false;
+  // Try sending verification email in background without blocking login
   try {
-    const actionCodeSettings = {
-      url: `${window.location.origin}/login?verified=true`,
-      handleCodeInApp: true,
-    };
-    await sendEmailVerification(cred.user, actionCodeSettings);
-    emailSent = true;
+    sendEmailVerification(cred.user).catch(() => {});
   } catch (e) {
-    console.warn("Verification email with ActionCodeSettings failed, trying fallback default:", e);
-    try {
-      await sendEmailVerification(cred.user);
-      emailSent = true;
-    } catch (e2) {
-      console.error("Verification email failed completely:", e2);
-    }
+    console.warn("Background email verification call failed:", e);
   }
 
-  await signOut(auth)
-  return { user: cred.user, emailSent }
+  return { user: cred.user }
 }
 
 export async function login(email, password) {
