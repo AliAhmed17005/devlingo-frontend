@@ -3,10 +3,11 @@ import { useParams, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { useTheme } from "../context/ThemeContext";
 import { db } from "../firebase/config";
-import { doc, getDoc, updateDoc, arrayUnion, onSnapshot } from "firebase/firestore";
+import { doc, getDoc, setDoc, updateDoc, arrayUnion, onSnapshot } from "firebase/firestore";
 import Layout from "../components/Layout";
 import { motion } from "framer-motion";
 import { dropCourse } from "../utils/helpers";
+import toast from "react-hot-toast";
 
 // ============ COURSE ONBOARDING ============
 export function CourseOnboarding() {
@@ -28,15 +29,39 @@ export function CourseOnboarding() {
   }, [courseId]);
 
   const enroll = async (isNew) => {
+    if (!currentUser) {
+      toast.error("Please sign in to enroll");
+      navigate("/login");
+      return;
+    }
     setLoading(true);
-    await updateDoc(doc(db, "users", currentUser.uid), {
-      enrolledCourses: arrayUnion({
-        courseId, enrolledAt: new Date().toISOString(),
-        level: isNew ? "easy" : "pending", completedTopics: []
-      })
-    });
-    if (isNew) navigate(`/roadmap/${courseId}`);
-    else navigate(`/assessment/${courseId}`);
+    try {
+      const userRef = doc(db, "users", currentUser.uid);
+      const userSnap = await getDoc(userRef);
+      let enrolled = [];
+      if (userSnap.exists()) {
+        enrolled = userSnap.data().enrolledCourses || [];
+      }
+      const existing = enrolled.find(e => (e.courseId || e) === courseId);
+      if (!existing) {
+        enrolled.push({
+          courseId,
+          enrolledAt: new Date().toISOString(),
+          level: isNew ? "easy" : "pending",
+          completedTopics: []
+        });
+        await setDoc(userRef, { enrolledCourses: enrolled }, { merge: true });
+      }
+      toast.success(`Enrolled in ${course?.title || "course"}!`);
+      if (isNew) navigate(`/roadmap/${courseId}`);
+      else navigate(`/assessment/${courseId}`);
+    } catch (err) {
+      console.error("Enrollment error:", err);
+      if (isNew) navigate(`/roadmap/${courseId}`);
+      else navigate(`/assessment/${courseId}`);
+    } finally {
+      setLoading(false);
+    }
   };
 
   if (!course) return (
