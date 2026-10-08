@@ -126,7 +126,7 @@ export default function BattleArena() {
   // Dual presence and live match state
   const isOpponentInArena = Boolean(challenge?.[opponentRole]?.inArena);
   const amIInArena = Boolean(challenge?.[myRole]?.inArena);
-  const isMatchLive = challenge?.status === "in_battle" && Boolean(challenge?.startedAt);
+  const isMatchLive = challenge?.status === "in_battle" || challenge?.status === "accepted" || Boolean(challenge?.startedAt);
 
   // Auto-initialize code immediately when duel transitions to live
   useEffect(() => {

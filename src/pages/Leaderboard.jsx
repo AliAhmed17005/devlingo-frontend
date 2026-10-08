@@ -92,6 +92,16 @@ export default function Leaderboard() {
     if (!targetUid) return toast.error("User ID not found");
     if (targetUid === currentUser.uid) return toast.error("Can't challenge yourself");
 
+    // Leaderboard Fair Play Rule: users within ±200 XP difference can challenge each other
+    const meUser = users.find(u => u.id === currentUser?.uid);
+    const myPoints = meUser?.totalPoints || 0;
+    const targetPoints = targetUser.totalPoints || 0;
+    const xpDiff = Math.abs(myPoints - targetPoints);
+
+    if (xpDiff > 200) {
+      return toast.error(`Rank gap too large! Leaderboard duels require rivals within ±200 XP (Current diff: ${xpDiff} XP). You can challenge any friend in Community without XP limits!`);
+    }
+
     setSending(targetUid);
     try {
       const battleProblem = getRandomBattleProblem();
@@ -128,7 +138,7 @@ export default function Leaderboard() {
         timestamp: serverTimestamp(),
       });
 
-      // Deliver notification safely (does not fail challenge if subcollection security rules restrict write)
+      // Deliver notification safely
       try {
         await addDoc(collection(db, `users/${targetUid}/notifications`), {
           type: "challenge",
@@ -147,26 +157,33 @@ export default function Leaderboard() {
     } catch (err) {
       console.error("Challenge error:", err);
       toast.error("Could not send challenge: " + err.message);
+    } finally {
+      setSending(null);
     }
-    setSending(null);
   };
 
   const respondChallenge = async (ch, accept) => {
     const { updateDoc, doc } = await import("firebase/firestore");
+    const challengeId = typeof ch === "string" ? ch : ch?.id;
+    if (!challengeId) return toast.error("Invalid challenge ID");
     try {
       if (accept) {
-        await updateDoc(doc(db, "challenges", ch.id), {
-          status: "accepted",
-          "player2.status": "accepted"
+        await updateDoc(doc(db, "challenges", challengeId), {
+          status: "in_battle",
+          startedAt: Date.now(),
+          "player2.status": "ready"
         });
         toast.success("Battle accepted! Entering Arena... ⚔️");
-        navigate(`/battle/${ch.id}`);
+        navigate(`/battle/${challengeId}`);
       } else {
-        await updateDoc(doc(db, "challenges", ch.id), { status: "declined" });
-        setChallenges(prev => prev.filter(c => c.id !== ch.id));
+        await updateDoc(doc(db, "challenges", challengeId), { status: "declined" });
+        setChallenges(prev => prev.filter(c => c.id !== challengeId));
         toast.success("Challenge declined.");
       }
-    } catch { toast.error("Action failed"); }
+    } catch (err) {
+      console.error("Respond challenge failed:", err);
+      toast.error("Action failed: " + err.message);
+    }
   };
 
   const meIndex = users.findIndex(u => u.id === currentUser?.uid);
@@ -287,23 +304,34 @@ export default function Leaderboard() {
                     {isMe ? (
                       <span style={{ fontSize: 11, color: s.muted }}>—</span>
                     ) : (
-                      <button
-                        onClick={() => sendChallenge(user)}
-                        disabled={sending === user.id}
-                        title={`Challenge ${user.name} to 1v1 Battle Duel`}
-                        style={{
-                          padding: "6px 12px",
-                          borderRadius: 6,
-                          background: sending === user.id ? s.border : "#6366f1",
-                          color: "white",
-                          border: "none",
-                          fontSize: 11,
-                          fontWeight: 700,
-                          cursor: sending === user.id ? "not-allowed" : "pointer"
-                        }}
-                      >
-                        {sending === user.id ? "Sending..." : "⚔️ Challenge"}
-                      </button>
+                      (() => {
+                        const meUser = users.find(u => u.id === currentUser?.uid);
+                        const myPoints = meUser?.totalPoints || 0;
+                        const xpDiff = Math.abs((user.totalPoints || 0) - myPoints);
+                        const isEligible = xpDiff <= 200;
+
+                        return (
+                          <button
+                            onClick={() => sendChallenge(user)}
+                            disabled={sending === user.id || !isEligible}
+                            title={!isEligible
+                              ? `XP difference is ${xpDiff} XP. On Leaderboard, duels are limited to within ±200 XP. Challenge friends in Community without XP limits!`
+                              : `Challenge to 1v1 Battle`}
+                            style={{
+                              padding: "5px 10px",
+                              borderRadius: 6,
+                              background: !isEligible ? (isDark ? "#232b3a" : "#e2e8f0") : sending === user.id ? s.border : "#6366f1",
+                              color: !isEligible ? s.muted : "white",
+                              border: "none",
+                              fontSize: 11,
+                              fontWeight: 600,
+                              cursor: !isEligible || sending === user.id ? "not-allowed" : "pointer"
+                            }}
+                          >
+                            {!isEligible ? "±200 XP Limit" : sending === user.id ? "..." : "Challenge"}
+                          </button>
+                        );
+                      })()
                     )}
                   </div>
                 );

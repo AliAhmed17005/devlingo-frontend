@@ -83,8 +83,9 @@ export default function Notifications() {
     if (notif.challengeId && !notif.challengeId.startsWith("demo")) {
       try {
         await updateDoc(doc(db, "challenges", notif.challengeId), {
-          status: "accepted",
-          "player2.status": "accepted"
+          status: "in_battle",
+          startedAt: Date.now(),
+          "player2.status": "ready"
         });
       } catch {}
       toast.success("Challenge accepted! Entering Battle Arena... ⚔️");
