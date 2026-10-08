@@ -149,9 +149,11 @@ export default function BattleArena() {
       updatePayload[`${myRole}.lastJoined`] = Date.now();
     }
 
-    // 2. ONLY start the battle if the opponent is ALSO in the arena and the battle has NOT started yet
+    // 2. ONLY start the battle if BOTH players are actively in the arena and the battle has NOT started yet
+    const myInArena = Boolean(challenge[myRole]?.inArena) || Boolean(updatePayload[`${myRole}.inArena`]);
     const otherInArena = Boolean(challenge[opponentRole]?.inArena);
-    if (otherInArena && !challenge.startedAt && challenge.status !== "finished") {
+
+    if (myInArena && otherInArena && !challenge.startedAt && challenge.status !== "finished") {
       updatePayload.status = "in_battle";
       updatePayload.startedAt = Date.now();
       updatePayload.timeLimit = problem.timeLimit || 300;
@@ -241,7 +243,7 @@ export default function BattleArena() {
 
   // 5. Run Test Cases
   const handleRunTests = async (shouldSubmit = false) => {
-    if (isRunning || isSubmitting) return;
+    if (isRunning || isSubmitting || challenge?.status === "finished") return;
     setIsRunning(true);
     setActiveTab("tests");
     setConsoleOutput("🚀 Executing Python test suite in WebWorker sandbox...\n");
@@ -293,6 +295,13 @@ print("__DEVLINGO_SUITE_RESULT__:" + json.dumps(__suite_results__))
 `;
 
       const execution = await runPython(suiteHarness);
+
+      // Abort immediately if opponent surrendered while test execution was in progress
+      if (challenge?.status === "finished") {
+        setIsRunning(false);
+        return;
+      }
+
       const rawOutput = execution.output || "";
 
       // Check if Python suite returned structured results
@@ -1612,8 +1621,9 @@ print("__DEVLINGO_SUITE_RESULT__:" + json.dumps(__suite_results__))
                     VICTORY! 🏆
                   </h2>
                   <p style={{ color: s.muted, fontSize: 14, margin: "0 0 20px 0" }}>
-                    You crushed the 1v1 battle against{" "}
-                    <strong>{opponentData?.name || "your rival"}</strong>!
+                    {challenge?.finishReason === "forfeit"
+                      ? `Your opponent (${opponentData?.name || "your rival"}) surrendered the battle! You win by forfeit! 🏳️🏆`
+                      : `You crushed the 1v1 battle against ${opponentData?.name || "your rival"}!`}
                   </p>
                   <div
                     style={{

@@ -157,8 +157,8 @@ export default function Leaderboard() {
     try {
       if (accept) {
         await updateDoc(doc(db, "challenges", ch.id), {
-          status: "in_battle",
-          startedAt: Date.now()
+          status: "accepted",
+          "player2.status": "accepted"
         });
         toast.success("Battle accepted! Entering Arena... ⚔️");
         navigate(`/battle/${ch.id}`);
