@@ -1170,7 +1170,14 @@ export default function Community() {
                                 </span>
                               </div>
 
-                              <div style={{ flexShrink: 0 }}>
+                              <div style={{ flexShrink: 0, display: "flex", alignItems: "center", gap: 6 }}>
+                                <button
+                                  onClick={() => sendChallengeToFriend(user)}
+                                  title={`Challenge ${user.name} to 1v1 Battle`}
+                                  style={{ padding: "4px 8px", background: "rgba(99,102,241,0.15)", color: "#6366f1", border: "none", borderRadius: 4, cursor: "pointer", fontSize: 11, fontWeight: 600 }}
+                                >
+                                  ⚔️ Duel
+                                </button>
                                 {isOutgoing ? (
                                   <span style={{ fontSize: 11, color: s.muted }}>Sent</span>
                                 ) : isIncoming ? (

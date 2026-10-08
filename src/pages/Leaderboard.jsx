@@ -287,34 +287,23 @@ export default function Leaderboard() {
                     {isMe ? (
                       <span style={{ fontSize: 11, color: s.muted }}>—</span>
                     ) : (
-                      (() => {
-                        const meUser = users.find(u => u.id === currentUser?.uid);
-                        const myPoints = meUser?.totalPoints || 0;
-                        const xpDiff = Math.abs((user.totalPoints || 0) - myPoints);
-                        const isEligible = xpDiff <= 200;
-
-                        return (
-                          <button
-                            onClick={() => sendChallenge(user)}
-                            disabled={sending === user.id || !isEligible}
-                            title={!isEligible
-                              ? `XP difference is ${xpDiff} XP. On Leaderboard, duels are limited to within ±200 XP for fair ranking. Challenge friends directly in Community without XP limits!`
-                              : `Challenge to 1v1 Battle Duel (XP diff: ${xpDiff} XP)`}
-                            style={{
-                              padding: "4px 10px",
-                              borderRadius: 6,
-                              background: !isEligible ? (isDark ? "#232b3a" : "#e2e8f0") : sending === user.id ? s.border : "#6366f1",
-                              color: !isEligible ? s.muted : "white",
-                              border: "none",
-                              fontSize: 11,
-                              fontWeight: 600,
-                              cursor: !isEligible || sending === user.id ? "not-allowed" : "pointer"
-                            }}
-                          >
-                            {!isEligible ? "±200 XP Limit" : sending === user.id ? "..." : "Challenge"}
-                          </button>
-                        );
-                      })()
+                      <button
+                        onClick={() => sendChallenge(user)}
+                        disabled={sending === user.id}
+                        title={`Challenge ${user.name} to 1v1 Battle Duel`}
+                        style={{
+                          padding: "6px 12px",
+                          borderRadius: 6,
+                          background: sending === user.id ? s.border : "#6366f1",
+                          color: "white",
+                          border: "none",
+                          fontSize: 11,
+                          fontWeight: 700,
+                          cursor: sending === user.id ? "not-allowed" : "pointer"
+                        }}
+                      >
+                        {sending === user.id ? "Sending..." : "⚔️ Challenge"}
+                      </button>
                     )}
                   </div>
                 );
