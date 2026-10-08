@@ -138,20 +138,16 @@ export default function Leaderboard() {
         timestamp: serverTimestamp(),
       });
 
-      // Deliver notification safely
-      try {
-        await addDoc(collection(db, `users/${targetUid}/notifications`), {
-          type: "challenge",
-          challengeId: docRef.id,
-          message: `${currentUser.displayName || "A user"} challenged you to a 1v1 Code Duel! (100 XP stake)`,
-          from: currentUser.uid,
-          fromName: currentUser.displayName || "Rival",
-          read: false,
-          timestamp: serverTimestamp(),
-        });
-      } catch (notifErr) {
-        console.warn("Direct notification subcollection write bypassed (challenge doc exists):", notifErr);
-      }
+      // Deliver notification asynchronously
+      addDoc(collection(db, `users/${targetUid}/notifications`), {
+        type: "challenge",
+        challengeId: docRef.id,
+        message: `${currentUser.displayName || "A user"} challenged you to a 1v1 Code Duel! (100 XP stake)`,
+        from: currentUser.uid,
+        fromName: currentUser.displayName || "Rival",
+        read: false,
+        timestamp: serverTimestamp(),
+      }).catch(() => {});
 
       toast.success(`1v1 Challenge sent to ${targetUser.name || "user"}! ⚔️`);
     } catch (err) {

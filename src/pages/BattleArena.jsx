@@ -212,18 +212,26 @@ export default function BattleArena() {
 
   // 4. Battle Timer Countdown (Only runs when match is actively live)
   useEffect(() => {
-    if (!challenge || challenge.status !== "in_battle" || !challenge.startedAt) return;
+    if (!challenge || (challenge.status !== "in_battle" && challenge.status !== "accepted") || !challenge.startedAt) return;
 
-    const limit = challenge.timeLimit || problem.timeLimit || 300;
-    const started = challenge.startedAt;
+    const getTimestampMillis = (ts) => {
+      if (!ts) return Date.now();
+      if (typeof ts === "number") return ts;
+      if (typeof ts.toMillis === "function") return ts.toMillis();
+      if (ts.seconds) return ts.seconds * 1000;
+      return Date.now();
+    };
+
+    const limit = challenge.timeLimit || problem?.timeLimit || 300;
+    const started = getTimestampMillis(challenge.startedAt);
 
     const updateTimer = () => {
       const elapsed = Math.floor((Date.now() - started) / 1000);
-      const remaining = Math.max(0, limit - elapsed);
+      const remaining = Math.max(0, limit - Math.max(0, elapsed));
       setTimeLeft(remaining);
 
-      // Handle time expiration
-      if (remaining === 0 && challenge.status === "in_battle") {
+      // Handle time expiration strictly when full duration elapsed
+      if (remaining === 0 && challenge.status === "in_battle" && elapsed >= limit) {
         handleTimeExpired();
       }
     };

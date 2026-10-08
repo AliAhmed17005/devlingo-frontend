@@ -46,21 +46,47 @@ export default function Notifications() {
 
   useEffect(() => {
     if (!currentUser) return;
-    const q = query(collection(db, `users/${currentUser.uid}/notifications`), orderBy("timestamp", "desc"));
-    const unsub = onSnapshot(q, async snap => {
-      const docs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-      setNotifs(docs);
-      if (docs.length === 0 && !seeded) {
-        setSeeded(true);
-        for (const n of DEMO_NOTIFS) {
-          await addDoc(collection(db, `users/${currentUser.uid}/notifications`), { ...n, timestamp: serverTimestamp() });
-        }
-      }
+
+    const qSub = query(collection(db, `users/${currentUser.uid}/notifications`), orderBy("timestamp", "desc"));
+    const unsubSub = onSnapshot(qSub, snapSub => {
+      const userNotifs = snapSub.docs.map(d => ({ id: d.id, ...d.data() }));
+
+      // Listen to incoming challenges targeting current user from root challenges collection
+      const qRoot = query(collection(db, "challenges"), where("to", "==", currentUser.uid), where("status", "==", "pending"));
+      onSnapshot(qRoot, snapRoot => {
+        const rootChallenges = snapRoot.docs.map(d => {
+          const data = d.data();
+          return {
+            id: d.id,
+            challengeId: d.id,
+            type: "challenge",
+            message: `${data.fromName || "A rival"} challenged you to a 1v1 Code Duel! (100 XP stake)`,
+            from: data.from,
+            fromName: data.fromName,
+            read: false,
+            timestamp: data.timestamp
+          };
+        });
+
+        // Combine both notifications streams uniquely by challengeId/id
+        const combinedMap = new Map();
+        rootChallenges.forEach(n => combinedMap.set(n.challengeId, n));
+        userNotifs.forEach(n => {
+          if (!combinedMap.has(n.challengeId || n.id)) {
+            combinedMap.set(n.challengeId || n.id, n);
+          }
+        });
+
+        setNotifs(Array.from(combinedMap.values()));
+      }, () => {
+        setNotifs(userNotifs);
+      });
     }, () => {
       setNotifs(DEMO_NOTIFS.map((n, i) => ({ ...n, id: `mock_${i}` })));
     });
-    return unsub;
-  }, [currentUser, seeded]);
+
+    return () => unsubSub();
+  }, [currentUser]);
 
   const markRead = async (notifId) => {
     if (notifId.startsWith("mock_")) return;
