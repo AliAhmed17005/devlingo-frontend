@@ -647,6 +647,8 @@ export default function Community() {
   // Send 1v1 challenge to a friend (unrestricted by XP difference)
   const sendChallengeToFriend = async (friend) => {
     if (!friend || !currentUser) return;
+    const targetUid = friend.uid || friend.id || friend.user_id;
+    if (!targetUid) return toast.error("Could not resolve friend ID");
     try {
       const myTag = currentUserData?.tagId || "---";
       const myName = currentUserData?.name || currentUser.displayName || "User";
@@ -656,8 +658,8 @@ export default function Community() {
         from: currentUser.uid,
         fromName: myName,
         fromTag: myTag,
-        to: friend.uid,
-        toName: friend.name,
+        to: targetUid,
+        toName: friend.name || "Friend",
         status: "pending",
         topic: battleProblem.topic || "Python",
         xpStake: 100,
@@ -673,8 +675,8 @@ export default function Community() {
           passed: false
         },
         player2: {
-          uid: friend.uid,
-          name: friend.name,
+          uid: targetUid,
+          name: friend.name || "Friend",
           status: "invited",
           inArena: false,
           progress: 0,
@@ -687,7 +689,7 @@ export default function Community() {
       });
 
       try {
-        await addDoc(collection(db, `users/${friend.uid}/notifications`), {
+        await addDoc(collection(db, `users/${targetUid}/notifications`), {
           type: "challenge",
           challengeId: docRef.id,
           message: `${myName} challenged you to a 1v1 Code Duel! (100 XP stake)`,
@@ -700,7 +702,7 @@ export default function Community() {
         console.warn("Direct notification subcollection write bypassed (challenge document exists):", notifErr);
       }
 
-      toast.success(`1v1 Code Duel challenge sent to ${friend.name}! (Topic: ${battleProblem.topic})`);
+      toast.success(`1v1 Code Duel challenge sent to ${friend.name || "friend"}! ⚔️`);
     } catch (e) {
       toast.error("Could not send challenge: " + e.message);
     }

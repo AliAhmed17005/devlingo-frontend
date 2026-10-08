@@ -88,24 +88,20 @@ export default function Leaderboard() {
 
   const sendChallenge = async (targetUser) => {
     if (!currentUser) return toast.error("Login required");
-    if (targetUser.id === currentUser.uid) return toast.error("Can't challenge yourself");
+    const targetUid = targetUser.id || targetUser.uid;
+    if (!targetUid) return toast.error("User ID not found");
+    if (targetUid === currentUser.uid) return toast.error("Can't challenge yourself");
 
-    // Leaderboard Fair Play Rule: users within ±200 XP difference can challenge each other
-    const meUser = users.find(u => u.id === currentUser.uid);
-    const myPoints = meUser?.totalPoints || 0;
-    const targetPoints = targetUser.totalPoints || 0;
-    const xpDiff = Math.abs(myPoints - targetPoints);
-
-    if (xpDiff > 200) {
-      return toast.error(`Rank gap too large! Leaderboard duels require rivals within ±200 XP (Current diff: ${xpDiff} XP). You can challenge any friend in Community without XP limits!`);
-    }
-
-    setSending(targetUser.id);
+    setSending(targetUid);
     try {
       const battleProblem = getRandomBattleProblem();
       const docRef = await addDoc(collection(db, "challenges"), {
-        from: currentUser.uid, fromName: currentUser.displayName || "You",
-        to: targetUser.id, toName: targetUser.name, status: "pending",
+        type: "challenge",
+        from: currentUser.uid,
+        fromName: currentUser.displayName || "You",
+        to: targetUid,
+        toName: targetUser.name || "Rival",
+        status: "pending",
         topic: battleProblem.topic || "Python",
         xpStake: 100,
         battleProblem,
@@ -120,8 +116,8 @@ export default function Leaderboard() {
           passed: false
         },
         player2: {
-          uid: targetUser.id,
-          name: targetUser.name,
+          uid: targetUid,
+          name: targetUser.name || "Rival",
           status: "invited",
           inArena: false,
           progress: 0,
@@ -134,17 +130,20 @@ export default function Leaderboard() {
 
       // Deliver notification safely (does not fail challenge if subcollection security rules restrict write)
       try {
-        await addDoc(collection(db, `users/${targetUser.id}/notifications`), {
+        await addDoc(collection(db, `users/${targetUid}/notifications`), {
           type: "challenge",
           challengeId: docRef.id,
-          message: `${currentUser.displayName || "A user"} challenged you to a 1v1 Code Duel! 100 XP stake.`,
-          from: currentUser.uid, fromName: currentUser.displayName, read: false, timestamp: serverTimestamp(),
+          message: `${currentUser.displayName || "A user"} challenged you to a 1v1 Code Duel! (100 XP stake)`,
+          from: currentUser.uid,
+          fromName: currentUser.displayName || "Rival",
+          read: false,
+          timestamp: serverTimestamp(),
         });
       } catch (notifErr) {
         console.warn("Direct notification subcollection write bypassed (challenge doc exists):", notifErr);
       }
 
-      toast.success(`1v1 Challenge sent to ${targetUser.name}!`);
+      toast.success(`1v1 Challenge sent to ${targetUser.name || "user"}! ⚔️`);
     } catch (err) {
       console.error("Challenge error:", err);
       toast.error("Could not send challenge: " + err.message);
