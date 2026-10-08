@@ -3,11 +3,13 @@ import { useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { useTheme } from "../context/ThemeContext";
 import { db } from "../firebase/config";
-import { doc, onSnapshot, collection, getDocs, query, where, orderBy, limit } from "firebase/firestore";
+import { doc, onSnapshot, collection, getDocs, query, where, orderBy, limit, updateDoc } from "firebase/firestore";
 import { updateStreak, ensureUserTagId, dropCourse } from "../utils/helpers";
 import { syncUserProfileToRTDB } from "../firebase/realtime";
 import Layout from "../components/Layout";
 import { Flame, Zap, Globe, BookOpen } from "lucide-react";
+import toast from "react-hot-toast";
+import { COURSES_DATA } from "../firebase/seedData";
 
 const getGridDays = () => {
   const days = [];
@@ -66,6 +68,20 @@ export default function Dashboard() {
   const [skillRatings, setSkillRatings] = useState({});
   const [agentLog, setAgentLog] = useState([]);
 
+  const getTopicDisplayName = (topicKey) => {
+    if (!topicKey) return "";
+    const allCoursesList = courses.length > 0 ? courses : COURSES_DATA;
+    for (const c of allCoursesList) {
+      const match = (c.topics || []).find(t => t.id?.toUpperCase() === topicKey?.toUpperCase());
+      if (match) return `${match.id}: ${match.title}`;
+    }
+    for (const c of COURSES_DATA) {
+      const match = (c.topics || []).find(t => t.id?.toUpperCase() === topicKey?.toUpperCase());
+      if (match) return `${match.id}: ${match.title}`;
+    }
+    return topicKey.replace(/_/g, " ");
+  };
+
   useEffect(() => {
     if (!currentUser) return;
     fetch(`${process.env.REACT_APP_BACKEND_URL}/agent/state-log/${currentUser.uid}`)
@@ -74,10 +90,18 @@ export default function Dashboard() {
         throw new Error("Failed to fetch state log");
       })
       .then(data => {
-        setDecisionLogs(data);
+        const logsArray = Array.isArray(data)
+          ? data
+          : Array.isArray(data?.log)
+            ? data.log
+            : Array.isArray(data?.logs)
+              ? data.logs
+              : [];
+        setDecisionLogs(logsArray);
       })
       .catch(err => {
         console.warn("Error loading agent decision logs:", err);
+        setDecisionLogs([]);
       });
   }, [currentUser]);
 
@@ -159,7 +183,20 @@ export default function Dashboard() {
     const userRef = doc(db, 'users', currentUser.uid);
     const unsub = onSnapshot(userRef, (snap) => {
       if (snap.exists()) {
-        setSkillRatings(snap.data()?.skillRatings || {});
+        const rawSkills = snap.data()?.skillRatings || {};
+        
+        // Auto-clean legacy dummy keys for this and all existing users
+        const legacyKeys = ["variables", "loops", "functions", "lists", "dictionaries", "files", "oop"];
+        const hasLegacy = legacyKeys.some(k => k in rawSkills);
+
+        if (hasLegacy) {
+          const cleaned = { ...rawSkills };
+          legacyKeys.forEach(k => delete cleaned[k]);
+          updateDoc(userRef, { skillRatings: cleaned }).catch(console.warn);
+          setSkillRatings(cleaned);
+        } else {
+          setSkillRatings(rawSkills);
+        }
       }
     });
     return () => unsub();
@@ -196,8 +233,40 @@ export default function Dashboard() {
     weeks.push(gridDays.slice(i, i + 7));
   }
 
+  const normalizeId = (id) => (id || "").toUpperCase().replace(/^T0*(\d+)$/, (_, n) => `T${n.padStart(2, '0')}`);
   const enrolledCourseIds = userData?.enrolledCourses?.map(e => e.courseId || e) || [];
   const currentCourses = courses.filter(c => enrolledCourseIds.includes(c.id));
+  
+  const primaryCourse = currentCourses[0];
+  const primaryEnrollment = userData?.enrolledCourses?.find(e => (e.courseId || e) === primaryCourse?.id);
+  const userCompletedTopics = new Set((primaryEnrollment?.completedTopics || []).map(normalizeId));
+  const primaryTopics = primaryCourse?.topics || [];
+
+  // Active Goal Plan integration: filter learning path to selected topics only
+  const activeGoal = userData?.activeGoalPlan;
+  const isGoalActive = activeGoal && (!activeGoal.course_id || activeGoal.course_id === primaryCourse?.id);
+  const isCustomGoal = isGoalActive && activeGoal?.plan_mode === "custom";
+  const goalTopicIds = isCustomGoal && activeGoal?.selected_topics
+    ? new Set((activeGoal.selected_topics || []).map(normalizeId))
+    : null;
+
+  const relevantTopics = isCustomGoal
+    ? primaryTopics.filter(t => goalTopicIds.has(normalizeId(t.id)))
+    : primaryTopics;
+
+  const activeTopic = relevantTopics.find(t => !userCompletedTopics.has(normalizeId(t.id))) || relevantTopics[0];
+  const allCompleted = relevantTopics.length > 0 && relevantTopics.every(t => userCompletedTopics.has(normalizeId(t.id)));
+
+  const handleDropGoal = async () => {
+    if (!window.confirm("Drop your active goal plan? Your course roadmap will revert to standard sequential learning.")) return;
+    try {
+      await updateDoc(doc(db, "users", currentUser.uid), { activeGoalPlan: null });
+      fetch(`${process.env.REACT_APP_BACKEND_URL}/scheduling/drop-active-plan/${currentUser.uid}`, { method: "POST" }).catch(() => {});
+      toast.success("🚫 Goal dropped! Standard course curriculum restored.");
+    } catch (err) {
+      toast.error("Could not drop goal plan.");
+    }
+  };
 
   return (
     <Layout title="Dashboard">
@@ -231,25 +300,127 @@ export default function Dashboard() {
           })}
         </div>
 
+        {/* Active Goal Plan Banner on Dashboard */}
+        {isGoalActive && (
+          <div
+            style={{
+              background: isCustomGoal
+                ? (isDark ? "rgba(13,148,136,0.12)" : "rgba(13,148,136,0.06)")
+                : (isDark ? "rgba(99,102,241,0.12)" : "rgba(99,102,241,0.06)"),
+              border: `1px solid ${isCustomGoal ? "#0d9488" : "#6366f1"}`,
+              borderRadius: 12,
+              padding: "16px 20px",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              flexWrap: "wrap",
+              gap: 12
+            }}
+          >
+            <div>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+                <span style={{ fontSize: 18 }}>{isCustomGoal ? "🎯" : "🤖"}</span>
+                <span
+                  style={{
+                    fontSize: 11,
+                    fontWeight: 800,
+                    textTransform: "uppercase",
+                    letterSpacing: "0.5px",
+                    color: isCustomGoal ? "#0d9488" : "#6366f1",
+                    background: isCustomGoal ? "rgba(13,148,136,0.18)" : "rgba(99,102,241,0.18)",
+                    padding: "2px 8px",
+                    borderRadius: 4
+                  }}
+                >
+                  {isCustomGoal ? "Active Custom Goal" : "Active AI Adaptive Engine"}
+                </span>
+                <span style={{ fontSize: 14, fontWeight: 700, color: s.text }}>
+                  "{activeGoal.goal_title}"
+                </span>
+              </div>
+              <p style={{ fontSize: 13, color: s.muted, margin: 0 }}>
+                {isCustomGoal
+                  ? `Focusing on ${relevantTopics.length} selected topics (other topics skipped)`
+                  : `All topics scheduled dynamically by Elo ratings`}
+                {" · "}Pace: <strong>{activeGoal.available_hours || 1}h daily</strong>
+                {" · "}Session Load: <strong style={{ color: "#6366f1" }}>{activeGoal.questions_per_session || 22} Qs/session</strong>
+                {" · "}Deadline: <strong>{activeGoal.deadline || "None"}</strong>
+              </p>
+            </div>
+
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <button
+                type="button"
+                onClick={() => navigate("/goal-planner")}
+                style={{
+                  padding: "7px 14px",
+                  borderRadius: 8,
+                  fontSize: 12,
+                  fontWeight: 600,
+                  background: s.card,
+                  color: s.text,
+                  border: `1px solid ${s.border}`,
+                  cursor: "pointer"
+                }}
+              >
+                Manage Goal
+              </button>
+              <button
+                type="button"
+                onClick={handleDropGoal}
+                style={{
+                  padding: "7px 12px",
+                  borderRadius: 8,
+                  fontSize: 12,
+                  fontWeight: 700,
+                  background: "rgba(239,68,68,0.12)",
+                  color: "#ef4444",
+                  border: "1px solid rgba(239,68,68,0.25)",
+                  cursor: "pointer"
+                }}
+              >
+                🚫 Drop Goal
+              </button>
+            </div>
+          </div>
+        )}
+
         <div style={{ display:"grid",gridTemplateColumns:"1fr 1fr",gap:16 }}>
           {/* Today's task */}
           <div style={{ background:s.card,border:`1px solid ${s.border}`,borderRadius:10,padding:20 }}>
-            <p style={{ color:s.muted,fontSize:11,fontWeight:600,letterSpacing:0.8,margin:"0 0 8px",textTransform:"uppercase" }}>Today's Task</p>
-            <p style={{ fontWeight:600,fontSize:16,color:s.text,margin:"0 0 4px" }}>
-              {currentCourses[0] ? `${currentCourses[0].title} — ${currentCourses[0].topics?.[0]?.title || "Basics"}` : "No course enrolled"}
+            <p style={{ color:s.muted,fontSize:11,fontWeight:600,letterSpacing:0.8,margin:"0 0 8px",textTransform:"uppercase" }}>
+              {isCustomGoal ? "Today's Goal Task" : "Today's Task"}
             </p>
-            <p style={{ color:s.muted,fontSize:13,margin:"0 0 14px" }}>7 questions · ~20 mins</p>
+            <p style={{ fontWeight:600,fontSize:16,color:s.text,margin:"0 0 4px" }}>
+              {primaryCourse
+                ? `${primaryCourse.title} — ${allCompleted ? "Review & Practice" : (activeTopic?.title || "Next Lesson")}`
+                : "No course enrolled"}
+            </p>
+            <p style={{ color:s.muted,fontSize:13,margin:"0 0 14px" }}>
+              {activeTopic
+                ? activeGoal?.questions_per_session
+                  ? `${activeGoal.questions_per_session} questions · ~${Math.round((activeGoal.available_hours || 1) * 60)} mins`
+                  : "~20 mins · Next topic in roadmap"
+                : "7 questions · ~20 mins"}
+            </p>
             <div style={{ display:"flex",alignItems:"center",gap:8,marginBottom:14 }}>
-              <span style={{ background:"rgba(16,185,129,0.1)",color:"#10b981",padding:"3px 10px",borderRadius:4,fontSize:12,fontWeight:500 }}>+70 XP</span>
+              <span style={{ background:"rgba(16,185,129,0.1)",color:"#10b981",padding:"3px 10px",borderRadius:4,fontSize:12,fontWeight:500 }}>
+                +{activeTopic?.xp || 70} XP
+              </span>
               <span style={{ color:s.muted,fontSize:12 }}>Due by midnight</span>
             </div>
             <div style={{ display:"flex",gap:8 }}>
-              <button onClick={() => currentCourses[0] && navigate(`/study/${currentCourses[0].id}/${currentCourses[0].topics?.[0]?.id || "t1"}`)}
-                style={{ flex:1,padding:"9px",borderRadius:8,background:"#6366f1",color:"white",border:"none",fontWeight:600,fontSize:13,cursor:"pointer" }}>
-                Start Task
+              <button
+                onClick={() => primaryCourse && activeTopic && navigate(`/study/${primaryCourse.id}/${activeTopic.id}`)}
+                style={{ flex:1,padding:"9px",borderRadius:8,background:"#6366f1",color:"white",border:"none",fontWeight:600,fontSize:13,cursor:"pointer" }}
+              >
+                {allCompleted ? "Practice" : "Start Task"}
               </button>
-              <button style={{ padding:"9px 16px",borderRadius:8,background:"transparent",color:s.muted,border:`1px solid ${s.border}`,cursor:"pointer",fontSize:13 }}>
-                Later
+              <button
+                onClick={() => primaryCourse && navigate(`/roadmap/${primaryCourse.id}`)}
+                style={{ padding:"9px 16px",borderRadius:8,background: isDark ? "rgba(99,102,241,0.15)" : "rgba(99,102,241,0.08)",color:"#818cf8",border:`1px solid ${s.border}`,cursor:"pointer",fontSize:13,fontWeight:600,display:"flex",alignItems:"center",gap:6 }}
+              >
+                🗺️ View Roadmap
               </button>
             </div>
           </div>
@@ -339,6 +510,12 @@ export default function Dashboard() {
                       <div style={{ display:"flex",gap:8,alignItems:"center" }}>
                         <button onClick={(e) => {
                           e.stopPropagation();
+                          navigate(`/roadmap/${course.id}`);
+                        }} style={{ padding:"4px 10px",borderRadius:6,background: isDark ? "rgba(99,102,241,0.2)" : "rgba(99,102,241,0.1)",color:"#818cf8",border:"none",fontSize:12,fontWeight:600,cursor:"pointer" }}>
+                          🗺️ Roadmap
+                        </button>
+                        <button onClick={(e) => {
+                          e.stopPropagation();
                           if (window.confirm(`Are you sure you want to drop ${course.title}?`)) {
                             dropCourse(currentUser.uid, course.id);
                           }
@@ -426,11 +603,11 @@ export default function Dashboard() {
             These decisions happen automatically based on your behavior and chat messages
           </p>
           
-          {decisionLogs.length === 0 ? (
+          {(!Array.isArray(decisionLogs) || decisionLogs.length === 0) ? (
             <p style={{ color: s.muted, fontSize: 13, margin: 0 }}>No decision history found.</p>
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-              {decisionLogs.slice(0, 8).map((log, idx) => {
+              {(Array.isArray(decisionLogs) ? decisionLogs : []).slice(0, 8).map((log, idx) => {
                 const action = log.action;
                 let icon = "➡️";
                 let actionText = "Maintained Level";
@@ -464,49 +641,66 @@ export default function Dashboard() {
         </div>
 
         {/* Elo Skill Ratings */}
-        {Object.keys(skillRatings).length > 0 && (
+        {Object.keys(skillRatings).filter(t => !["variables", "loops", "functions", "lists", "dictionaries", "files", "oop"].includes(t)).length > 0 && (
           <div style={{
             background: isDark ? '#1e2433' : '#ffffff',
             border: `1px solid ${isDark ? '#2d3748' : '#e2e8f0'}`,
             borderRadius: 14, padding: 20, marginTop: 20
           }}>
             <h3 style={{ fontWeight: 700, fontSize: 15, color: isDark ? '#f0f4ff' : '#0f172a', margin: '0 0 4px' }}>
-              Your Elo Skill Ratings
+              Your Elo Skill Ratings per Topic
             </h3>
             <p style={{ fontSize: 12, color: isDark ? '#8892a4' : '#64748b', margin: '0 0 16px' }}>
-              Above 1000 = stronger than average problems on this topic
+              1000 = baseline · Above 1000 = stronger proficiency · Dynamic IRT updates after every practice session
             </p>
-            {Object.entries(skillRatings).map(([topic, rating]) => (
-              <div key={topic} style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 10 }}>
-                <span style={{ fontSize: 12, color: isDark ? '#f0f4ff' : '#0f172a', width: 110, textTransform: 'capitalize' }}>
-                  {topic.replace(/_/g, ' ')}
+            {Object.entries(skillRatings)
+              .filter(([topic]) => !["variables", "loops", "functions", "lists", "dictionaries", "files", "oop"].includes(topic))
+              .map(([topic, rating]) => (
+              <div key={topic} style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12 }}>
+                <span
+                  style={{
+                    fontSize: 12,
+                    fontWeight: 600,
+                    color: isDark ? '#f0f4ff' : '#0f172a',
+                    width: 200,
+                    flexShrink: 0,
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap'
+                  }}
+                  title={getTopicDisplayName(topic)}
+                >
+                  {getTopicDisplayName(topic)}
                 </span>
-                <div style={{ flex: 1, height: 8, background: isDark ? '#2d3748' : '#e2e8f0', borderRadius: 20, position: 'relative' }}>
+                <div style={{ flex: 1, height: 10, background: isDark ? '#2d3748' : '#e2e8f0', borderRadius: 20, position: 'relative' }}>
                   <div style={{
                     height: '100%',
-                    width: `${Math.min((rating / 1400) * 100, 100)}%`,
-                    background: rating > 1050 ? '#10b981' : rating < 950 ? '#ef4444' : '#6366f1',
+                    width: `${Math.min((rating / 1600) * 100, 100)}%`,
+                    background: rating >= 1050 ? '#10b981' : rating <= 950 ? '#ef4444' : '#6366f1',
                     borderRadius: 20,
                     transition: 'width 0.5s ease'
                   }} />
                   <div style={{
-                    position: 'absolute', top: -14, left: '71.4%',
-                    borderLeft: '1px dashed #6b7280', height: 36, opacity: 0.5
+                    position: 'absolute', top: -14, left: `${(1000 / 1600) * 100}%`,
+                    borderLeft: '1px dashed #6b7280', height: 38, opacity: 0.5
                   }} />
                 </div>
-                <span style={{ fontSize: 12, fontWeight: 600, color: rating > 1050 ? '#10b981' : rating < 950 ? '#ef4444' : '#6366f1', width: 45, textAlign: 'right' }}>
-                  {Math.round(rating)}
+                <span style={{ fontSize: 12, fontWeight: 700, color: rating >= 1050 ? '#10b981' : rating <= 950 ? '#ef4444' : '#6366f1', width: 65, textAlign: 'right' }}>
+                  {Math.round(rating)} Elo
                 </span>
               </div>
             ))}
-            <p style={{ fontSize: 10, color: isDark ? '#4a5568' : '#94a3b8', margin: '8px 0 0', textAlign: 'right' }}>
-              baseline: 1000
-            </p>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: isDark ? '#8892a4' : '#94a3b8', margin: '10px 0 0' }}>
+              <span>Easy (&lt;1050)</span>
+              <span>Baseline: 1000 Elo</span>
+              <span>Medium (1050-1350)</span>
+              <span>Hard (&gt;1350)</span>
+            </div>
           </div>
         )}
 
         {/* Real-time Agent Log */}
-        {agentLog.length >= 2 && (
+        {Array.isArray(agentLog) && agentLog.length >= 2 && (
           <div style={{
             background: isDark ? '#1e2433' : '#ffffff',
             border: `1px solid ${isDark ? '#2d3748' : '#e2e8f0'}`,

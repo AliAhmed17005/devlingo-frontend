@@ -26,6 +26,7 @@ import Settings from "./pages/Settings";
 import CodeHealth from "./pages/CodeHealth";
 import Reports from "./pages/Reports";
 import GoalPlanner from "./pages/GoalPlanner";
+import BattleArena from "./pages/BattleArena";
 
 function App() {
   useEffect(() => {
@@ -82,6 +83,7 @@ function App() {
             <Route path="/code-health"          element={<ProtectedRoute><CodeHealth /></ProtectedRoute>} />
             <Route path="/reports"              element={<ProtectedRoute><Reports /></ProtectedRoute>} />
             <Route path="/goals"                element={<ProtectedRoute><GoalPlanner /></ProtectedRoute>} />
+            <Route path="/battle/:challengeId"  element={<ProtectedRoute><BattleArena /></ProtectedRoute>} />
 
             {/* Default redirect */}
             <Route path="/" element={<Landing />} />

@@ -12,8 +12,10 @@ import {
   createRTDBGroup, leaveRTDBGroup, deleteRTDBGroup, clearRTDBChat, syncGroupMemberRTDB
 } from "../firebase/realtime";
 import Layout from "../components/Layout";
-import { MessageSquare, UserPlus, Check, X, Plus, Search, MessageCircle, Trash, Trash2, LogOut } from "lucide-react";
+import { MessageSquare, UserPlus, Check, X, Plus, Search, MessageCircle, Trash, Trash2, LogOut, Swords } from "lucide-react";
 import toast from "react-hot-toast";
+import { openGoogleCalendarEvent } from "../utils/calendarSync";
+import { getRandomBattleProblem } from "../utils/battleProblems";
 
 const COLORS = ["#6366f1", "#0f9b8e", "#f59e0b", "#10b981", "#8b5cf6", "#ef4444", "#3b82f6", "#ec4899", "#14b8a6", "#f97316"];
 
@@ -582,6 +584,140 @@ export default function Community() {
     setSearch("");
   };
 
+  // Send 1v1 challenge to a matched peer
+  const sendChallengeToMatchedPeer = async (peer, matchType = "Peer Match") => {
+    if (!peer || !currentUser) return;
+    try {
+      const myTag = currentUserData?.tagId || "---";
+      const myName = currentUserData?.name || currentUser.displayName || "User";
+      const battleProblem = getRandomBattleProblem();
+      const docRef = await addDoc(collection(db, "challenges"), {
+        type: "challenge",
+        from: currentUser.uid,
+        fromName: myName,
+        fromTag: myTag,
+        to: peer.user_id,
+        toName: peer.name,
+        status: "pending",
+        topic: peer.strong_in && peer.strong_in.length > 0 ? peer.strong_in[0] : battleProblem.topic || "Python",
+        xpStake: 100,
+        battleProblem,
+        player1: {
+          uid: currentUser.uid,
+          name: myName,
+          status: "ready",
+          progress: 0,
+          passedCount: 0,
+          score: 0,
+          passed: false
+        },
+        player2: {
+          uid: peer.user_id,
+          name: peer.name,
+          status: "invited",
+          progress: 0,
+          passedCount: 0,
+          score: 0,
+          passed: false
+        },
+        message: `${myName} matched with you (${matchType}) and challenged you! 100 XP stake.`,
+        timestamp: serverTimestamp()
+      });
+
+      try {
+        await addDoc(collection(db, `users/${peer.user_id}/notifications`), {
+          type: "challenge",
+          challengeId: docRef.id,
+          message: `${myName} challenged you to a 1v1 Code Duel! 100 XP stake.`,
+          from: currentUser.uid,
+          fromName: myName,
+          read: false,
+          timestamp: serverTimestamp()
+        });
+      } catch (notifErr) {
+        console.warn("Direct notification subcollection write bypassed (challenge document exists):", notifErr);
+      }
+
+      toast.success(`1v1 Battle Challenge sent to ${peer.name}!`);
+    } catch (e) {
+      toast.error("Could not send challenge: " + e.message);
+    }
+  };
+
+  // Send 1v1 challenge to a friend (unrestricted by XP difference)
+  const sendChallengeToFriend = async (friend) => {
+    if (!friend || !currentUser) return;
+    try {
+      const myTag = currentUserData?.tagId || "---";
+      const myName = currentUserData?.name || currentUser.displayName || "User";
+      const battleProblem = getRandomBattleProblem();
+      const docRef = await addDoc(collection(db, "challenges"), {
+        type: "challenge",
+        from: currentUser.uid,
+        fromName: myName,
+        fromTag: myTag,
+        to: friend.uid,
+        toName: friend.name,
+        status: "pending",
+        topic: battleProblem.topic || "Python",
+        xpStake: 100,
+        battleProblem,
+        player1: {
+          uid: currentUser.uid,
+          name: myName,
+          status: "ready",
+          inArena: false,
+          progress: 0,
+          passedCount: 0,
+          score: 0,
+          passed: false
+        },
+        player2: {
+          uid: friend.uid,
+          name: friend.name,
+          status: "invited",
+          inArena: false,
+          progress: 0,
+          passedCount: 0,
+          score: 0,
+          passed: false
+        },
+        message: `${myName} challenged you to a 1v1 Code Duel! 100 XP stake. Topic: ${battleProblem.topic || "Python"}.`,
+        timestamp: serverTimestamp()
+      });
+
+      try {
+        await addDoc(collection(db, `users/${friend.uid}/notifications`), {
+          type: "challenge",
+          challengeId: docRef.id,
+          message: `${myName} challenged you to a 1v1 Code Duel! (100 XP stake)`,
+          from: currentUser.uid,
+          fromName: myName,
+          read: false,
+          timestamp: serverTimestamp()
+        });
+      } catch (notifErr) {
+        console.warn("Direct notification subcollection write bypassed (challenge document exists):", notifErr);
+      }
+
+      toast.success(`1v1 Code Duel challenge sent to ${friend.name}! (Topic: ${battleProblem.topic})`);
+    } catch (e) {
+      toast.error("Could not send challenge: " + e.message);
+    }
+  };
+
+  // Schedule a session in Google Calendar
+  const scheduleSessionInGoogleCal = (peer, titlePrefix = "DevLingo Study Session") => {
+    openGoogleCalendarEvent({
+      title: `${titlePrefix}: You & ${peer.name}`,
+      startDate: new Date(),
+      durationHours: 1,
+      details: `DevLingo Peer Collaboration Session with ${peer.name}.\nTopics: ${peer.strong_in ? peer.strong_in.join(', ') : 'Python / Code Study'}\nPlatform: DevLingo`,
+      location: "DevLingo App"
+    });
+    toast.success("Opening Google Calendar to save to phone...");
+  };
+
   // Initials and colors helpers
   const initials = (name) => {
     if (!name) return "U";
@@ -853,7 +989,7 @@ export default function Community() {
                                     {matchResults.complement.match_score}% match
                                   </p>
                                   {matchResults.complement.strong_in?.length > 0 && (
-                                    <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                                    <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginBottom: 10 }}>
                                       {matchResults.complement.strong_in.map(t => (
                                         <span key={t} style={{ fontSize: 10, background: 'rgba(16,185,129,0.15)', color: '#34d399', padding: '2px 8px', borderRadius: 20 }}>
                                           {t}
@@ -861,6 +997,26 @@ export default function Community() {
                                       ))}
                                     </div>
                                   )}
+                                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, marginTop: 8 }}>
+                                    <button
+                                      onClick={() => sendChallengeToMatchedPeer(matchResults.complement, "Best Complement")}
+                                      style={{ padding: "6px 8px", background: "#6366f1", color: "white", border: "none", borderRadius: 6, fontSize: 11, fontWeight: 600, cursor: "pointer" }}
+                                    >
+                                      ⚔️ Challenge
+                                    </button>
+                                    <button
+                                      onClick={() => startDM({ uid: matchResults.complement.user_id, name: matchResults.complement.name })}
+                                      style={{ padding: "6px 8px", background: isDark ? "rgba(255,255,255,0.08)" : "#e2e8f0", color: s.text, border: "none", borderRadius: 6, fontSize: 11, fontWeight: 600, cursor: "pointer" }}
+                                    >
+                                      💬 Chat
+                                    </button>
+                                  </div>
+                                  <button
+                                    onClick={() => scheduleSessionInGoogleCal(matchResults.complement, "DevLingo Complement Session")}
+                                    style={{ width: "100%", marginTop: 6, padding: "5px", background: "transparent", border: `1px solid ${s.border}`, color: s.muted, borderRadius: 6, fontSize: 10, fontWeight: 500, cursor: "pointer" }}
+                                  >
+                                    🗓️ Schedule in Google Cal
+                                  </button>
                                 </div>
                               )}
 
@@ -884,7 +1040,7 @@ export default function Community() {
                                     {matchResults.study_buddy.similarity}% similar
                                   </p>
                                   {matchResults.your_weak_topics?.length > 0 && (
-                                    <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 10 }}>
+                                    <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 10, marginBottom: 10 }}>
                                       {matchResults.your_weak_topics.map(t => (
                                         <span key={t} style={{ fontSize: 10, background: 'rgba(239,68,68,0.15)', color: '#f87171', padding: '2px 8px', borderRadius: 20 }}>
                                           practice: {t}
@@ -892,6 +1048,26 @@ export default function Community() {
                                       ))}
                                     </div>
                                   )}
+                                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, marginTop: 8 }}>
+                                    <button
+                                      onClick={() => sendChallengeToMatchedPeer(matchResults.study_buddy, "Study Buddy")}
+                                      style={{ padding: "6px 8px", background: "#0f9b8e", color: "white", border: "none", borderRadius: 6, fontSize: 11, fontWeight: 600, cursor: "pointer" }}
+                                    >
+                                      ⚔️ Challenge
+                                    </button>
+                                    <button
+                                      onClick={() => startDM({ uid: matchResults.study_buddy.user_id, name: matchResults.study_buddy.name })}
+                                      style={{ padding: "6px 8px", background: isDark ? "rgba(255,255,255,0.08)" : "#e2e8f0", color: s.text, border: "none", borderRadius: 6, fontSize: 11, fontWeight: 600, cursor: "pointer" }}
+                                    >
+                                      💬 Chat
+                                    </button>
+                                  </div>
+                                  <button
+                                    onClick={() => scheduleSessionInGoogleCal(matchResults.study_buddy, "DevLingo Study Buddy Session")}
+                                    style={{ width: "100%", marginTop: 6, padding: "5px", background: "transparent", border: `1px solid ${s.border}`, color: s.muted, borderRadius: 6, fontSize: 10, fontWeight: 500, cursor: "pointer" }}
+                                  >
+                                    🗓️ Schedule in Google Cal
+                                  </button>
                                 </div>
                               )}
                             </div>
@@ -1081,7 +1257,30 @@ export default function Community() {
                                   <span style={{ fontWeight: 500, fontSize: 13, color: s.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                                     {friend.name}
                                   </span>
-                                  <span style={{ fontSize: 10, color: s.muted }}>{timeAgo(friend.timestamp)}</span>
+                                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                                    <span style={{ fontSize: 10, color: s.muted }}>{timeAgo(friend.timestamp)}</span>
+                                    <span
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        sendChallengeToFriend(friend);
+                                      }}
+                                      title={`Challenge ${friend.name} to 1v1 Code Duel`}
+                                      style={{
+                                        background: isDark ? "rgba(99, 102, 241, 0.18)" : "rgba(99, 102, 241, 0.1)",
+                                        color: "#6366f1",
+                                        borderRadius: 6,
+                                        padding: "2px 6px",
+                                        fontSize: 10,
+                                        fontWeight: 700,
+                                        display: "flex",
+                                        alignItems: "center",
+                                        gap: 3,
+                                        cursor: "pointer",
+                                      }}
+                                    >
+                                      <Swords size={11} /> Duel
+                                    </span>
+                                  </div>
                                 </div>
                                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 2 }}>
                                   <p style={{ fontSize: 11, color: s.muted, margin: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>
@@ -1133,6 +1332,32 @@ export default function Community() {
 
                   {/* Right part: Action buttons */}
                   <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    {/* 1v1 Challenge Friend Button */}
+                    {viewMode === "dms" && activeDM && (
+                      <button
+                        onClick={() => sendChallengeToFriend(activeDM)}
+                        title={`Challenge ${activeDM.name} to a 1v1 Code Duel (100 XP)`}
+                        style={{
+                          background: "linear-gradient(135deg, #6366f1, #8b5cf6)",
+                          color: "#fff",
+                          border: "none",
+                          padding: "6px 14px",
+                          borderRadius: 8,
+                          cursor: "pointer",
+                          fontWeight: 700,
+                          fontSize: 12,
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 6,
+                          boxShadow: "0 2px 8px rgba(99, 102, 241, 0.35)",
+                          transition: "all 0.15s ease",
+                        }}
+                      >
+                        <Swords size={14} />
+                        Challenge Friend
+                      </button>
+                    )}
+
                     {/* Clear Chat Button (DMs and Groups only) */}
                     {!activeCommunity && (
                       <button

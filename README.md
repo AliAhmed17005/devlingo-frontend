@@ -1,70 +1,31 @@
-# Getting Started with Create React App
+# DevLingo Frontend - AI-Powered Adaptive Python Learning Platform 🐍
 
-This project was bootstrapped with [Create React App](https://github.com/facebook/create-react-app).
+DevLingo is a next-generation web application for interactive Python learning, featuring real-time 1v1 battle duels, item response theory (IRT) dynamic difficulty scaling, Gemini AI progress coaching, and automated weekly reporting.
 
-## Available Scripts
+## 🚀 Key Features
 
-In the project directory, you can run:
+- **Interactive Python Sandbox:** Execute Python code directly in browser using WebWorker-isolated Pyodide.
+- **1v1 Battle Arena:** Real-time competitive duel arena with dual presence anti-cheat locking and live progress radar.
+- **Dynamic Elo Skill Rating:** Real-time IRT-based difficulty adjustments ($K=32$) per topic.
+- **AI Peer Matchmaking:** Cosine-similarity pairing for study buddies and complement mentors.
+- **AI Progress Coach & Automated Reports:** Weekly progress summaries emailed via FastAPI reporting engine.
+- **Google Calendar Sync:** Export study schedules directly to personal calendars.
 
-### `npm start`
+## 👥 Contributors
 
-Runs the app in the development mode.\
-Open [http://localhost:3000](http://localhost:3000) to view it in your browser.
+- **Ali Ahmed** ([@AliAhmed17005](https://github.com/AliAhmed17005))
+- **Owais** (`mowaiss1975@gmail.com`)
+- **Huzaifa Yaseen** (`huzaifayaseen989@gmail.com`)
 
-The page will reload when you make changes.\
-You may also see any lint errors in the console.
+## 🛠️ Local Setup & Execution
 
-### `npm test`
+```bash
+# Install dependencies
+npm install
 
-Launches the test runner in the interactive watch mode.\
-See the section about [running tests](https://facebook.github.io/create-react-app/docs/running-tests) for more information.
+# Run frontend development server
+npm start
 
-### `npm run build`
-
-Builds the app for production to the `build` folder.\
-It correctly bundles React in production mode and optimizes the build for the best performance.
-
-The build is minified and the filenames include the hashes.\
-Your app is ready to be deployed!
-
-See the section about [deployment](https://facebook.github.io/create-react-app/docs/deployment) for more information.
-
-### `npm run eject`
-
-**Note: this is a one-way operation. Once you `eject`, you can't go back!**
-
-If you aren't satisfied with the build tool and configuration choices, you can `eject` at any time. This command will remove the single build dependency from your project.
-
-Instead, it will copy all the configuration files and the transitive dependencies (webpack, Babel, ESLint, etc) right into your project so you have full control over them. All of the commands except `eject` will still work, but they will point to the copied scripts so you can tweak them. At this point you're on your own.
-
-You don't have to ever use `eject`. The curated feature set is suitable for small and middle deployments, and you shouldn't feel obligated to use this feature. However we understand that this tool wouldn't be useful if you couldn't customize it when you are ready for it.
-
-## Learn More
-
-You can learn more in the [Create React App documentation](https://facebook.github.io/create-react-app/docs/getting-started).
-
-To learn React, check out the [React documentation](https://reactjs.org/).
-
-### Code Splitting
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/code-splitting](https://facebook.github.io/create-react-app/docs/code-splitting)
-
-### Analyzing the Bundle Size
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size](https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size)
-
-### Making a Progressive Web App
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app](https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app)
-
-### Advanced Configuration
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/advanced-configuration](https://facebook.github.io/create-react-app/docs/advanced-configuration)
-
-### Deployment
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/deployment](https://facebook.github.io/create-react-app/docs/deployment)
-
-### `npm run build` fails to minify
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify](https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify)
+# Run both frontend & backend with 1-click script
+npm run start:all
+```

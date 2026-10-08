@@ -8,6 +8,7 @@ import Layout from "../components/Layout";
 import { motion } from "framer-motion";
 import { COURSES_DATA } from "../firebase/seedData";
 import { dropCourse } from "../utils/helpers";
+import toast from "react-hot-toast";
 
 // ============ COURSE ONBOARDING ============
 export function CourseOnboarding() {
@@ -269,25 +270,143 @@ export function CourseRoadmap() {
         throw new Error("Failed to fetch skill ratings");
       })
       .then(data => {
-        if (data.ratings) {
-          setSkillRatings(data.ratings);
+        const raw = data.ratings || data.skill_ratings || [];
+        const legacy = ["variables", "loops", "functions", "lists", "dictionaries", "files", "oop"];
+        let list = [];
+        if (Array.isArray(raw)) {
+          list = raw.filter(r => !legacy.includes((r.topic_id || "").toLowerCase()) && !legacy.includes((r.name || "").toLowerCase()));
+        } else if (raw && typeof raw === "object") {
+          list = Object.entries(raw)
+            .filter(([k]) => !legacy.includes(k.toLowerCase()))
+            .map(([k, v]) => ({ topic_id: k, rating: v, name: k }));
         }
+        setSkillRatings(list);
       })
       .catch(err => {
         console.warn("Could not load skill ratings from backend:", err);
       });
   }, [currentUser]);
 
+  const normalizeId = (id) => (id || "").toUpperCase().replace(/^T0*(\d+)$/, (_, n) => `T${n.padStart(2, '0')}`);
   const enrollment = userData?.enrolledCourses?.find(e => (e.courseId || e) === activeCourseId);
-  const completedTopics = enrollment?.completedTopics || [];
+  const rawCompleted = enrollment?.completedTopics || [];
+  const completedSet = new Set(rawCompleted.map(normalizeId));
   const topics = course?.topics || defaultCourse.topics || [];
-  const completedCount = completedTopics.length;
-  const progressPct = topics.length ? Math.round((completedCount / topics.length) * 100) : 0;
-  const currentTopicIndex = completedCount < topics.length ? completedCount : topics.length - 1;
+
+  // Active Goal Plan integration
+  const activeGoal = userData?.activeGoalPlan;
+  const isGoalActive = activeGoal && (!activeGoal.course_id || activeGoal.course_id === activeCourseId);
+  const isCustomGoal = isGoalActive && activeGoal?.plan_mode === "custom";
+  const goalTopicIds = isCustomGoal && activeGoal?.selected_topics
+    ? new Set((activeGoal.selected_topics || []).map(normalizeId))
+    : null;
+
+  const isTopicComplete = (topicId) => completedSet.has(normalizeId(topicId));
+  const isTopicInGoal = (topicId) => !isCustomGoal || (goalTopicIds && goalTopicIds.has(normalizeId(topicId)));
+
+  const goalTopicsList = isCustomGoal ? topics.filter(t => isTopicInGoal(t.id)) : topics;
+  const completedCount = goalTopicsList.filter(t => isTopicComplete(t.id)).length;
+  const progressPct = goalTopicsList.length ? Math.round((completedCount / goalTopicsList.length) * 100) : 0;
+  
+  // Find first uncompleted topic that is part of the active path
+  const firstUncompletedIndex = topics.findIndex(t => isTopicInGoal(t.id) && !isTopicComplete(t.id));
+  const currentTopicIndex = firstUncompletedIndex !== -1 ? firstUncompletedIndex : Math.max(0, topics.length - 1);
+
+  const handleDropGoal = async () => {
+    if (!window.confirm("Drop your active goal plan? The roadmap will revert to the standard course curriculum.")) return;
+    try {
+      await updateDoc(doc(db, "users", currentUser.uid), { activeGoalPlan: null });
+      fetch(`${process.env.REACT_APP_BACKEND_URL}/scheduling/drop-active-plan/${currentUser.uid}`, { method: "POST" }).catch(() => {});
+      toast.success("🚫 Goal dropped! Full course sequence restored.");
+    } catch (err) {
+      toast.error("Could not drop goal plan.");
+    }
+  };
 
   return (
     <Layout title="Roadmap">
       <div style={{ maxWidth: 800, margin: "0 auto" }}>
+        {/* Active Goal Plan Banner */}
+        {isGoalActive && (
+          <div style={{
+            background: isCustomGoal
+              ? (isDark ? "rgba(13,148,136,0.12)" : "rgba(13,148,136,0.08)")
+              : (isDark ? "rgba(99,102,241,0.12)" : "rgba(99,102,241,0.08)"),
+            border: `1px solid ${isCustomGoal ? "#0d9488" : "#6366f1"}`,
+            borderRadius: 12,
+            padding: "14px 18px",
+            marginBottom: 20,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            flexWrap: "wrap",
+            gap: 12
+          }}>
+            <div>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+                <span style={{ fontSize: 16 }}>{isCustomGoal ? "🎯" : "🤖"}</span>
+                <span style={{
+                  fontSize: 11,
+                  fontWeight: 800,
+                  textTransform: "uppercase",
+                  letterSpacing: "0.5px",
+                  color: isCustomGoal ? "#0d9488" : "#6366f1",
+                  background: isCustomGoal ? "rgba(13,148,136,0.18)" : "rgba(99,102,241,0.18)",
+                  padding: "2px 8px",
+                  borderRadius: 4
+                }}>
+                  {isCustomGoal ? "Active Custom Goal" : "Active AI Adaptive Engine"}
+                </span>
+                <span style={{ fontSize: 13, fontWeight: 700, color: s.text }}>
+                  "{activeGoal.goal_title}"
+                </span>
+              </div>
+              <p style={{ fontSize: 12, color: s.muted, margin: 0 }}>
+                {isCustomGoal
+                  ? `Focusing strictly on ${goalTopicsList.length} selected topics (other topics skipped).`
+                  : `All ${topics.length} topics dynamically sequenced according to your Elo ratings.`}
+                {" · "}<strong>{activeGoal.questions_per_session || 20} Qs per session</strong>
+                {" · "}Deadline: <strong>{activeGoal.deadline || "None"}</strong>
+              </p>
+            </div>
+
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <button
+                type="button"
+                onClick={() => navigate("/goal-planner")}
+                style={{
+                  padding: "6px 12px",
+                  borderRadius: 6,
+                  fontSize: 11,
+                  fontWeight: 600,
+                  background: s.card,
+                  color: s.text,
+                  border: `1px solid ${s.border}`,
+                  cursor: "pointer"
+                }}
+              >
+                Manage Planner
+              </button>
+              <button
+                type="button"
+                onClick={handleDropGoal}
+                style={{
+                  padding: "6px 12px",
+                  borderRadius: 6,
+                  fontSize: 11,
+                  fontWeight: 700,
+                  background: "rgba(239,68,68,0.12)",
+                  color: "#ef4444",
+                  border: "1px solid rgba(239,68,68,0.25)",
+                  cursor: "pointer"
+                }}
+              >
+                🚫 Drop Goal
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* Course header */}
         <div style={{ marginBottom: 20 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 8 }}>
@@ -308,25 +427,25 @@ export function CourseRoadmap() {
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 12 }}>
             <div style={{ flex: 1, height: 4, background: s.border, borderRadius: 4, overflow: "hidden" }}>
-              <div style={{ width: `${progressPct}%`, height: "100%", background: "#6366f1", borderRadius: 4 }} />
+              <div style={{ width: `${progressPct}%`, height: "100%", background: isCustomGoal ? "#0d9488" : "#6366f1", borderRadius: 4 }} />
             </div>
-            <span style={{ fontSize: 13, fontWeight: 600, color: "#6366f1" }}>{progressPct}%</span>
+            <span style={{ fontSize: 13, fontWeight: 600, color: isCustomGoal ? "#0d9488" : "#6366f1" }}>{progressPct}%</span>
           </div>
         </div>
 
         {/* Stats */}
         <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 12, marginBottom: 20 }}>
-          <div style={{ background: s.card, border: `1px solid ${s.border}`, borderRadius: 10, padding: "12px 14px", borderLeft: "3px solid #6366f1" }}>
+          <div style={{ background: s.card, border: `1px solid ${s.border}`, borderRadius: 10, padding: "12px 14px", borderLeft: `3px solid ${isCustomGoal ? "#0d9488" : "#6366f1"}` }}>
             <p style={{ fontWeight: 600, fontSize: 18, color: s.text, margin: "0 0 1px" }}>{progressPct}%</p>
-            <p style={{ fontSize: 11, color: s.muted, margin: 0 }}>Progress</p>
+            <p style={{ fontSize: 11, color: s.muted, margin: 0 }}>{isCustomGoal ? "Goal Progress" : "Progress"}</p>
           </div>
           <div style={{ background: s.card, border: `1px solid ${s.border}`, borderRadius: 10, padding: "12px 14px", borderLeft: "3px solid #f59e0b" }}>
             <p style={{ fontWeight: 600, fontSize: 18, color: s.text, margin: "0 0 1px" }}>{userData?.totalPoints || 0}</p>
             <p style={{ fontSize: 11, color: s.muted, margin: 0 }}>Total XP</p>
           </div>
           <div style={{ background: s.card, border: `1px solid ${s.border}`, borderRadius: 10, padding: "12px 14px", borderLeft: "3px solid #10b981" }}>
-            <p style={{ fontWeight: 600, fontSize: 18, color: s.text, margin: "0 0 1px" }}>{completedCount}/{topics.length}</p>
-            <p style={{ fontSize: 11, color: s.muted, margin: 0 }}>Topics</p>
+            <p style={{ fontWeight: 600, fontSize: 18, color: s.text, margin: "0 0 1px" }}>{completedCount}/{goalTopicsList.length}</p>
+            <p style={{ fontSize: 11, color: s.muted, margin: 0 }}>{isCustomGoal ? "Goal Topics" : "Topics"}</p>
           </div>
         </div>
 
@@ -337,49 +456,95 @@ export function CourseRoadmap() {
             <p style={{ fontWeight: 600, fontSize: 15, color: s.text, margin: "0 0 4px" }}>{topics[currentTopicIndex].title}</p>
             <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
               <span style={{ fontSize: 11, color: "#10b981" }}>+{topics[currentTopicIndex].xp} XP</span>
-              <span style={{ fontSize: 11, color: s.muted }}>~20 mins</span>
+              <span style={{ fontSize: 11, color: s.muted }}>
+                {activeGoal?.questions_per_session ? `${activeGoal.questions_per_session} Questions (~${Math.round((activeGoal.available_hours || 1) * 60)} mins)` : "~20 mins"}
+              </span>
             </div>
             <button onClick={() => navigate(`/study/${activeCourseId}/${topics[currentTopicIndex].id}`)}
-              style={{ padding: "8px 18px", borderRadius: 8, background: "#6366f1", color: "white", border: "none", fontWeight: 600, fontSize: 13, cursor: "pointer" }}>
-              Start
+              style={{ padding: "8px 18px", borderRadius: 8, background: isCustomGoal ? "#0d9488" : "#6366f1", color: "white", border: "none", fontWeight: 600, fontSize: 13, cursor: "pointer" }}>
+              Start Study Session
             </button>
           </div>
         )}
 
         {/* Roadmap timeline */}
         <div>
-          <p style={{ fontWeight: 600, fontSize: 15, color: s.text, margin: "0 0 14px" }}>Learning Path</p>
+          <p style={{ fontWeight: 600, fontSize: 15, color: s.text, margin: "0 0 14px" }}>
+            {isCustomGoal ? "Goal Learning Path (Skipping Excluded Topics)" : "Learning Path"}
+          </p>
           <div style={{ position: "relative", paddingLeft: 36 }}>
             <div style={{ position: "absolute", left: 12, top: 0, bottom: 0, width: 2, background: s.border }} />
 
             {topics.map((topic, i) => {
-              const isComplete = completedTopics.includes(topic.id);
-              const isCurrent = i === currentTopicIndex;
+              const inGoal = isTopicInGoal(topic.id);
+              const isComplete = isTopicComplete(topic.id);
+              const isCurrent = inGoal && i === currentTopicIndex;
+
+              // An included topic is locked if there's an earlier included topic that is not yet completed
+              let isLocked = false;
+              if (inGoal && !isComplete && !isCurrent) {
+                for (let prevIdx = 0; prevIdx < i; prevIdx++) {
+                  if (isTopicInGoal(topics[prevIdx].id) && !isTopicComplete(topics[prevIdx].id)) {
+                    isLocked = true;
+                    break;
+                  }
+                }
+              }
 
               return (
                 <div key={topic.id} style={{ position: "relative", marginBottom: 10 }}>
                   <div style={{
                     position: "absolute", left: -36, top: 12,
                     width: 24, height: 24, borderRadius: "50%",
-                    background: isComplete ? "#10b981" : isCurrent ? "#6366f1" : s.card,
-                    border: `2px solid ${isComplete ? "#10b981" : isCurrent ? "#6366f1" : s.border}`,
+                    background: !inGoal
+                      ? (isDark ? "#1a1f2e" : "#f1f5f9")
+                      : isComplete
+                      ? "#10b981"
+                      : isCurrent
+                      ? (isCustomGoal ? "#0d9488" : "#6366f1")
+                      : (isDark ? "#232938" : "#f1f5f9"),
+                    border: `2px solid ${
+                      !inGoal
+                        ? s.border
+                        : isComplete
+                        ? "#10b981"
+                        : isCurrent
+                        ? (isCustomGoal ? "#0d9488" : "#6366f1")
+                        : s.border
+                    }`,
                     display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1
                   }}>
-                    <span style={{ fontSize: 10, color: isComplete || isCurrent ? "white" : s.muted }}>
-                      {isComplete ? "✓" : i + 1}
+                    <span style={{ fontSize: 10, color: inGoal && (isComplete || isCurrent) ? "white" : s.muted }}>
+                      {!inGoal ? "⏭️" : isComplete ? "✓" : isLocked ? "🔒" : i + 1}
                     </span>
                   </div>
 
                   <div style={{
-                    background: s.card, border: `1px solid ${isCurrent ? "#6366f1" : s.border}`,
+                    background: s.card,
+                    border: `1px solid ${!inGoal ? s.border : isCurrent ? (isCustomGoal ? "#0d9488" : "#6366f1") : s.border}`,
                     borderRadius: 8, padding: "10px 14px", display: "flex", alignItems: "center", justifyContent: "space-between",
-                    opacity: 1, cursor: "pointer"
+                    opacity: !inGoal ? 0.5 : isLocked ? 0.65 : 1,
+                    cursor: isLocked ? "not-allowed" : "pointer",
+                    transition: "all 0.2s"
                   }}
-                    onClick={() => navigate(`/study/${activeCourseId}/${topic.id}`)}>
+                    onClick={() => {
+                      if (!inGoal) {
+                        toast("ℹ️ This topic is skipped in your active custom goal plan. You can study it, or drop your goal plan to restore full sequential learning.", { icon: "ℹ️" });
+                        navigate(`/study/${activeCourseId}/${topic.id}`);
+                        return;
+                      }
+                      if (isLocked) {
+                        toast.error(`🔒 Complete "${topics[currentTopicIndex]?.title || 'earlier goal topics'}" first to unlock this!`);
+                        return;
+                      }
+                      navigate(`/study/${activeCourseId}/${topic.id}`);
+                    }}>
                     <div>
-                      {isCurrent && <span style={{ fontSize: 10, color: "#6366f1", fontWeight: 500 }}>Current</span>}
-                      <p style={{ fontWeight: 500, fontSize: 14, color: s.text, margin: 0 }}>{topic.title}</p>
-                      {isComplete && <p style={{ fontSize: 11, color: "#10b981", margin: "1px 0 0" }}>Completed</p>}
+                      {!inGoal && <span style={{ fontSize: 10, color: s.muted, fontWeight: 600, display: "block" }}>⏭️ Skipped in Custom Goal</span>}
+                      {inGoal && isCurrent && <span style={{ fontSize: 10, color: isCustomGoal ? "#0d9488" : "#6366f1", fontWeight: 600, display: "block" }}>⚡ Current Topic</span>}
+                      {inGoal && isLocked && <span style={{ fontSize: 10, color: s.muted, fontWeight: 500, display: "block" }}>🔒 Locked</span>}
+                      <p style={{ fontWeight: 500, fontSize: 14, color: isLocked || !inGoal ? s.muted : s.text, margin: 0 }}>{topic.title}</p>
+                      {isComplete && <p style={{ fontSize: 11, color: "#10b981", margin: "1px 0 0" }}>✓ Completed</p>}
                     </div>
                     <span style={{ fontSize: 11, color: s.muted }}>+{topic.xp} XP</span>
                   </div>
@@ -409,19 +574,20 @@ export function CourseRoadmap() {
             <div style={{ display: "flex", flexDirection: "column", gap: 16, paddingTop: 12 }}>
               {skillRatings.map((ratingObj, idx) => {
                 const rating = ratingObj.rating;
-                const name = ratingObj.name;
+                const matchTopic = (topics || []).find(t => t.id?.toUpperCase() === (ratingObj.topic_id || ratingObj.name)?.toUpperCase());
+                const name = matchTopic ? `${matchTopic.id}: ${matchTopic.title}` : (ratingObj.name || ratingObj.topic_id);
                 
-                const percent = Math.min((rating / 1400) * 100, 100);
+                const percent = Math.min((rating / 1600) * 100, 100);
                 
                 let barColor = "#6366f1";
-                if (rating > 1050) barColor = "#10b981";
-                else if (rating < 950) barColor = "#ef4444";
+                if (rating >= 1050) barColor = "#10b981";
+                else if (rating <= 950) barColor = "#ef4444";
 
-                const baselinePct = (1000 / 1400) * 100;
+                const baselinePct = (1000 / 1600) * 100;
 
                 return (
                   <div key={idx} style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                    <span style={{ fontWeight: 500, color: s.text, width: 140, flexShrink: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    <span style={{ fontWeight: 500, color: s.text, width: 180, flexShrink: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={name}>
                       {name}
                     </span>
                     

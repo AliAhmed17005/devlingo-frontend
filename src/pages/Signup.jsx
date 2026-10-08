@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { signup, resendVerification } from "../firebase/auth";
+import { signup } from "../firebase/auth";
 import { useTheme } from "../context/ThemeContext";
 import toast from "react-hot-toast";
 
@@ -11,8 +11,6 @@ export default function Signup() {
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
   const [loading, setLoading] = useState(false);
-  const [resending, setResending] = useState(false);
-  const [verificationSent] = useState(false);
   const [error, setError] = useState("");
   const { isDark } = useTheme();
   const navigate = useNavigate();
@@ -78,59 +76,6 @@ export default function Signup() {
       setLoading(false);
     }
   };
-
-  const handleResend = async () => {
-    try {
-      setResending(true);
-      await resendVerification(email, password);
-      toast.success("Verification email resent! Check your inbox and spam folder.");
-    } catch (err) {
-      toast.error(err.message || "Failed to resend verification email.");
-    } finally {
-      setResending(false);
-    }
-  };
-
-  if (verificationSent) {
-    return (
-      <div style={{ minHeight:"100vh",background:s.bg,display:"flex",alignItems:"stretch" }}>
-        <div style={{ flex:1,background:"linear-gradient(145deg,#4338ca 0%,#6366f1 50%,#0f9b8e 100%)",display:"flex",flexDirection:"column",justifyContent:"center",alignItems:"center",padding:48 }} className="hidden lg:flex">
-          <div style={{ textAlign:"center",maxWidth:360 }}>
-            <h2 style={{ color:"white",fontSize:28,fontWeight:600,margin:"0 0 12px",lineHeight:1.3 }}>Start your coding journey</h2>
-            <p style={{ color:"rgba(255,255,255,0.7)",fontSize:15,lineHeight:1.7,marginBottom:32 }}>Join developers learning with AI-powered adaptive courses</p>
-          </div>
-        </div>
-
-        <div style={{ width:"100%",maxWidth:480,background:s.bg,display:"flex",alignItems:"center",justifyContent:"center",padding:32 }}>
-          <div style={{ width:"100%" }}>
-            <div style={{ background:s.card,border:`1px solid ${s.border}`,borderRadius:12,padding:32,textAlign:"center" }}>
-              <div style={{ width:56,height:56,borderRadius:"50%",background:"rgba(99,102,241,0.1)",color:"#6366f1",display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 16px",fontSize:24 }}>
-                ✉️
-              </div>
-              <h2 style={{ fontWeight:600,fontSize:22,color:s.text,margin:"0 0 12px" }}>Check your email!</h2>
-              <p style={{ color:s.muted,fontSize:14,lineHeight:1.6,margin:"0 0 24px" }}>
-                We sent a verification link to <strong style={{ color:s.text }}>{email}</strong>. Open your email inbox (or check Spam/Junk folder), click the verification link, then sign in.
-              </p>
-
-              <div style={{ display:"flex",flexDirection:"column",gap:12 }}>
-                <button
-                  onClick={() => navigate("/login")}
-                  style={{ width:"100%",padding:"12px",borderRadius:8,background:"#6366f1",color:"white",border:"none",fontWeight:600,fontSize:14,cursor:"pointer" }}>
-                  Go to Login
-                </button>
-                <button
-                  onClick={handleResend}
-                  disabled={resending}
-                  style={{ width:"100%",padding:"10px",borderRadius:8,background:"transparent",color:s.muted,border:`1px solid ${s.border}`,fontWeight:500,fontSize:13,cursor:resending?"not-allowed":"pointer",opacity:resending?0.6:1 }}>
-                  {resending ? "Resending Email..." : "Resend Verification Email"}
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    );
-  }
 
   return (
     <div style={{ minHeight:"100vh",background:s.bg,display:"flex",alignItems:"stretch" }}>

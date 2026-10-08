@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { useAuth } from "../context/AuthContext";
 import { useTheme } from "../context/ThemeContext";
 import { db } from "../firebase/config";
-import { collection, query, orderBy, limit, onSnapshot } from "firebase/firestore";
+import { collection, query, orderBy, limit, onSnapshot, doc } from "firebase/firestore";
 import Layout from "../components/Layout";
 import toast from "react-hot-toast";
 
@@ -12,6 +12,8 @@ export default function Reports() {
   const [loading, setLoading] = useState(false);
   const [report, setReport] = useState(null);
   const [history, setHistory] = useState([]);
+  const [userData, setUserData] = useState(null);
+  const [sessionsCount, setSessionsCount] = useState(null);
 
   const s = isDark
     ? { card: "#1a1f2e", border: "#2d3748", text: "#f0f4ff", muted: "#8892a4", bg: "#0f1117" }
@@ -30,27 +32,72 @@ export default function Reports() {
     return () => unsub();
   }, [currentUser]);
 
+  // Track user study sessions to verify >= 1 completed session
+  useEffect(() => {
+    if (!currentUser) return;
+    const unsub = onSnapshot(collection(db, `users/${currentUser.uid}/sessions`), (snap) => {
+      setSessionsCount(snap.docs.length);
+    });
+    return () => unsub();
+  }, [currentUser]);
+
+  // Listen to user data to get email reliably
+  useEffect(() => {
+    if (!currentUser) return;
+    const unsub = onSnapshot(doc(db, "users", currentUser.uid), (snap) => {
+      if (snap.exists()) setUserData(snap.data());
+    });
+    return () => unsub();
+  }, [currentUser]);
+
   const generateReport = async () => {
+    if (sessionsCount === 0) {
+      toast.error("You must complete at least 1 study session before generating a progress report.");
+      return;
+    }
+
     setLoading(true);
     try {
+      // Use email from Firestore userData first, then from Auth, fallback to empty
+      const userEmail = userData?.email || currentUser?.email || "";
+
+      if (!userEmail) {
+        toast.error("No email found. Please update your email in Settings.");
+        setLoading(false);
+        return;
+      }
+
       const res = await fetch(
         `${process.env.REACT_APP_BACKEND_URL}/reporting/weekly-report`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ user_id: currentUser.uid })
+          body: JSON.stringify({ user_id: currentUser.uid, email: userEmail })
         }
       );
-      if (!res.ok) throw new Error("Failed");
+
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData?.detail || errData?.error || `Server returned ${res.status}`);
+      }
+
       const data = await res.json();
       if (data.status === "not enough data") {
-        toast.error(`Need more sessions (only ${data.sessions} found). Complete at least 2.`);
+        toast.error(data.message || `Need more sessions (only ${data.sessions || 0} found). Complete at least 1 session.`);
       } else {
         setReport(data);
-        toast.success(data.emailed ? "Report generated & emailed!" : "Report generated!");
+        if (data.emailed) {
+          toast.success(`Report generated & emailed to ${userEmail}!`);
+        } else if (data.email_error) {
+          toast.success("Report generated!");
+          toast.error(`Email delivery failed: ${data.email_error}`);
+        } else {
+          toast.success("Report generated! (Email not configured on backend)");
+        }
       }
     } catch (e) {
-      toast.error("Could not generate report. Is the backend running?");
+      console.error("Report generation error:", e);
+      toast.error(e.message || "Could not generate report. Is the backend running?");
     }
     setLoading(false);
   };
@@ -80,25 +127,55 @@ export default function Reports() {
           background: s.card, border: `1px solid ${s.border}`, borderRadius: 14,
           padding: 24, borderLeft: "4px solid #6366f1"
         }}>
-          <h3 style={{ fontWeight: 600, fontSize: 16, color: s.text, margin: "0 0 8px" }}>
-            Weekly Performance Report
-          </h3>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 10, marginBottom: 8 }}>
+            <h3 style={{ fontWeight: 600, fontSize: 16, color: s.text, margin: 0 }}>
+              Weekly Performance Report
+            </h3>
+            <span style={{
+              fontSize: 12,
+              background: isDark ? "rgba(99, 102, 241, 0.2)" : "rgba(99, 102, 241, 0.1)",
+              color: "#6366f1",
+              fontWeight: 700,
+              padding: "4px 10px",
+              borderRadius: 20
+            }}>
+              ⏱ Emailed Automatically Every Week
+            </span>
+          </div>
+
           <p style={{ fontSize: 13, color: s.muted, margin: "0 0 16px", lineHeight: 1.6 }}>
             Generates an AI-powered summary of your week including average score, trend analysis,
-            anomaly detection, and personalized improvement tips. The report is also emailed to your registered Gmail.
+            anomaly detection, and personalized improvement tips. Reports are <strong>automatically emailed to your registered Gmail once a week</strong> as you study, or you can trigger one on demand below.
           </p>
+
+          {sessionsCount === 0 && (
+            <div style={{
+              background: isDark ? "rgba(245, 158, 11, 0.12)" : "rgba(245, 158, 11, 0.08)",
+              border: "1px solid rgba(245, 158, 11, 0.35)",
+              borderRadius: 10,
+              padding: "12px 16px",
+              marginBottom: 16,
+              fontSize: 13,
+              color: isDark ? "#fde68a" : "#b45309",
+              lineHeight: 1.5
+            }}>
+              ⚠️ <strong>No Sessions Completed Yet:</strong> You must complete at least 1 study session before DevLingo can analyze your performance and dispatch weekly reports.
+            </div>
+          )}
+
           <button
             onClick={generateReport}
-            disabled={loading}
+            disabled={loading || sessionsCount === 0}
             style={{
               width: "100%", padding: "12px", borderRadius: 10,
-              background: loading ? "#4b5563" : "#6366f1",
+              background: loading || sessionsCount === 0 ? "#4b5563" : "#6366f1",
               color: "white", border: "none", fontWeight: 600, fontSize: 14,
-              cursor: loading ? "not-allowed" : "pointer",
-              transition: "background 0.2s"
+              cursor: loading || sessionsCount === 0 ? "not-allowed" : "pointer",
+              transition: "background 0.2s",
+              opacity: sessionsCount === 0 ? 0.7 : 1
             }}
           >
-            {loading ? "Generating..." : "📧 Send Weekly Report"}
+            {loading ? "Generating..." : sessionsCount === 0 ? "Complete 1 Session to Unlock Report" : "📧 Send Weekly Report Now"}
           </button>
         </div>
 
@@ -194,7 +271,7 @@ export default function Reports() {
                     {t.text}
                   </span>
                   <span style={{ fontSize: 12, color: s.muted }}>
-                    {r.total_sessions} sessions
+                    {r.total_sessions || r.sessions || 0} sessions
                   </span>
                   <span style={{ fontSize: 12, color: s.muted, marginLeft: "auto" }}>
                     {date}
@@ -216,7 +293,7 @@ export default function Reports() {
               No reports yet
             </h3>
             <p style={{ color: s.muted, fontSize: 14, margin: 0 }}>
-              Complete at least 2 study sessions to generate your first report
+              Complete at least 1 study session to generate your first weekly report
             </p>
           </div>
         )}

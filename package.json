@@ -2,6 +2,11 @@
   "name": "fyp-frontend",
   "version": "0.1.0",
   "private": true,
+  "contributors": [
+    "Ali Ahmed",
+    "Owais <mowaiss1975@gmail.com>",
+    "Huzaifa Yaseen <huzaifayaseen989@gmail.com>"
+  ],
   "dependencies": {
     "@codemirror/lang-python": "^6.2.1",
     "@google/generative-ai": "^0.24.1",
@@ -24,6 +29,7 @@
   },
   "scripts": {
     "start": "react-scripts start",
+    "start:all": "cmd /c start_all.bat",
     "build": "react-scripts build",
     "test": "react-scripts test",
     "eject": "react-scripts eject"

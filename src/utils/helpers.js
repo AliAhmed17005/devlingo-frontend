@@ -385,147 +385,26 @@ export async function dropCourse(uid, courseId) {
 }
 
 // ============ CHATBOT UTILITY ============
-async function askOpenAI(userMessage, history, context, apiKey) {
-  const systemInstruction = `You are Aria, an adaptive Python learning partner for DevLingo.
-Student: ${context.name} | Topic: ${context.topic} | Level: ${context.level} | Last score: ${context.lastScore}%
-Be encouraging, clear and concise. If they seem confused, use a simple analogy first.
-For code examples, use Python. Keep responses under 150 words unless explaining code.
-End with a follow-up question to keep engagement. Never say you are an AI.`;
+export async function askAI(userMessage, history = [], context = {}) {
+  const backendUrl = process.env.REACT_APP_BACKEND_URL || "http://localhost:8000";
 
-  const messages = [
-    { role: "system", content: systemInstruction },
-    ...history.slice(-10).map(m => ({
-      role: m.role === "user" ? "user" : "assistant",
-      content: m.content
-    })),
-    { role: "user", content: userMessage }
-  ];
-
-  const response = await fetch("https://api.openai.com/v1/chat/completions", {
+  const res = await fetch(`${backendUrl}/agent/chat`, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": `Bearer ${apiKey}`
-    },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      model: "gpt-4o-mini",
-      messages: messages,
-      max_tokens: 500,
-      temperature: 0.7
+      user_id: context?.userId || "student",
+      message: userMessage,
+      topic: context?.topic || "variables",
+      level: context?.level || "easy",
+      score: context?.lastScore || 0
     })
   });
 
-  if (!response.ok) {
-    const errData = await response.json().catch(() => ({}));
-    throw new Error(errData?.error?.message || `OpenAI API returned status ${response.status}`);
+  if (!res.ok) {
+    throw new Error(`Backend /agent/chat error: ${res.status}`);
   }
 
-  const result = await response.json();
-  return result.choices[0].message.content;
-}
-
-async function askGeminiAPI(userMessage, history, context, apiKey, modelName = "gemini-2.0-flash") {
-  const systemInstruction = `You are Aria, an adaptive Python learning partner for DevLingo.
-Student: ${context.name} | Topic: ${context.topic} | Level: ${context.level} | Last score: ${context.lastScore}%
-Be encouraging, clear and concise. If they seem confused, use a simple analogy first.
-For code examples, use Python. Keep responses under 150 words unless explaining code.
-End with a follow-up question to keep engagement. Never say you are an AI.`;
-
-  const contents = [
-    ...history.slice(-10).map(m => ({
-      role: m.role === "user" ? "user" : "model",
-      parts: [{ text: m.content }]
-    })),
-    {
-      role: "user",
-      parts: [{ text: userMessage }]
-    }
-  ];
-
-  const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify({
-      contents: contents,
-      systemInstruction: {
-        parts: [{ text: systemInstruction }]
-      },
-      generationConfig: {
-        maxOutputTokens: 1000,
-        temperature: 0.7
-      }
-    })
-  });
-
-  if (!response.ok) {
-    const errData = await response.json().catch(() => ({}));
-    throw new Error(errData?.error?.message || `Gemini API returned status ${response.status}`);
-  }
-
-  const result = await response.json();
-  const replyText = result.candidates?.[0]?.content?.parts?.[0]?.text;
-  if (!replyText) throw new Error("No text returned in Gemini response candidates.");
-  return replyText;
-}
-
-function getMockAriaResponse(message) {
-  const msg = message.toLowerCase();
-  if (msg.includes("hello") || msg.includes("hi") || msg.includes("hey")) {
-    return "Hi there! I'm Aria, your adaptive Python learning partner. I am running in Offline Sandbox Mode right now because your API keys are offline or out of quota. Let's practice Python! Ask me about 'variables', 'loops', or 'functions' to get started.";
-  }
-  if (msg.includes("variable") || msg.includes("type")) {
-    return "Variables are containers for storing data. In Python, you create one simply by assigning a value:\n```python\nx = 5\nname = \"DevLingo\"\nprint(type(x))  # Output: <class 'int'>\n```\nWhat kind of variable would you like to make? Ask me about 'loops' or 'functions' next!";
-  }
-  if (msg.includes("loop") || msg.includes("for") || msg.includes("while")) {
-    return "Loops let you repeat code! A `for` loop is great for repeating a set number of times, and a `while` loop runs as long as a condition is true:\n```python\nfor i in range(3):\n    print(\"Day\", i+1)\n```\nTry loops out! Ask me about 'variables' or 'functions' next.";
-  }
-  if (msg.includes("function") || msg.includes("def")) {
-    return "Functions are blocks of code that run when called. We define them with the `def` keyword:\n```python\ndef greet(name):\n    return f\"Hello, {name}!\"\n\nprint(greet(\"Student\"))\n```\nTry writing a function! What else should we learn? Ask me about 'variables' or 'loops'.";
-  }
-  return "I'm currently in Offline Sandbox Mode. Ask me about 'variables', 'loops', or 'functions' to explore Python basics! (To activate full AI, configure `REACT_APP_OPENAI_API_KEY` in your `.env` file and restart the server).";
-}
-
-export async function askAI(userMessage, history, context) {
-  const geminiKey = process.env.REACT_APP_GEMINI_API_KEY;
-  const openAiKey = process.env.REACT_APP_OPENAI_API_KEY;
-
-  const hasGemini = geminiKey && geminiKey.length > 10;
-  const hasOpenAi = openAiKey && openAiKey.length > 10;
-
-  if (hasOpenAi) {
-    try {
-      return await askOpenAI(userMessage, history, context, openAiKey);
-    } catch (oe) {
-      console.warn("OpenAI API failed, trying Gemini fallback:", oe);
-      if (hasGemini) {
-        try {
-          return await askGeminiAPI(userMessage, history, context, geminiKey, "gemini-2.0-flash");
-        } catch (ge) {
-          console.warn("Gemini fallback failed, trying Gemini 1.5 Flash:", ge);
-          try {
-            return await askGeminiAPI(userMessage, history, context, geminiKey, "gemini-1.5-flash");
-          } catch (ge15) {
-            console.error("All AI services failed:", ge15);
-          }
-        }
-      }
-      return getMockAriaResponse(userMessage);
-    }
-  } else if (hasGemini) {
-    try {
-      return await askGeminiAPI(userMessage, history, context, geminiKey, "gemini-2.0-flash");
-    } catch (e) {
-      try {
-        return await askGeminiAPI(userMessage, history, context, geminiKey, "gemini-1.5-flash");
-      } catch (e15) {
-        console.error("Gemini failed:", e15);
-        return getMockAriaResponse(userMessage);
-      }
-    }
-  } else {
-    return getMockAriaResponse(userMessage);
-  }
+  const data = await res.json();
+  return data.reply;
 }
 

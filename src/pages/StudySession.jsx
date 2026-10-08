@@ -7,7 +7,7 @@ import {
   doc, getDoc, addDoc, collection, serverTimestamp,
   updateDoc, onSnapshot, query, where, getDocs
 } from "firebase/firestore";
-import { runPython, askAI, updateDifficulty, checkAchievements, completeTopic, updateStreak } from "../utils/helpers";
+import { runPython, checkAchievements, updateStreak } from "../utils/helpers";
 import CodeMirror from "@uiw/react-codemirror";
 import { python } from "@codemirror/lang-python";
 import toast from "react-hot-toast";
@@ -28,6 +28,18 @@ export default function StudySession() {
   const [messagesSinceCheck, setMessagesSinceCheck] = useState(0);
   const [retryCount, setRetryCount] = useState(0);
   const [recentAccuracy, setRecentAccuracy] = useState(0.5);
+
+  // Active Goal Plan integration: adjust session question count dynamically
+  const activeGoal = userData?.activeGoalPlan;
+  const isGoalCourse = activeGoal && (!activeGoal.course_id || activeGoal.course_id === (courseId || "python-basics"));
+  const QUESTIONS_PER_SESSION = (isGoalCourse && activeGoal?.questions_per_session)
+    ? Math.max(5, Number(activeGoal.questions_per_session))
+    : 10;
+
+  const [sessionIndex, setSessionIndex] = useState(1);
+  const [seenProblemIds, setSeenProblemIds] = useState([]);
+  const [sessionRecords, setSessionRecords] = useState([]);
+  const [sessionCompleted, setSessionCompleted] = useState(false);
 
   const [selected, setSelected] = useState(null);
   const [submitted, setSubmitted] = useState(false);
@@ -70,7 +82,39 @@ export default function StudySession() {
     }
   }, [userData, topicId]);
 
-  const loadNextProblem = async () => {
+  // Prerequisite topic guard: prevents bypassing earlier uncompleted topics,
+  // respecting Custom Goal Plan by skipping unselected/excluded topics
+  useEffect(() => {
+    if (!userData || !course || !topicId) return;
+    const normalizeId = (id) => (id || "").toUpperCase().replace(/^T0*(\d+)$/, (_, n) => `T${n.padStart(2, '0')}`);
+    const enrollment = userData?.enrolledCourses?.find(e => (e.courseId || e) === (courseId || "python-basics"));
+    const completedSet = new Set((enrollment?.completedTopics || []).map(normalizeId));
+    const topicsList = course?.topics || [];
+
+    // If Custom Goal is active, only topics included in the goal are required prerequisites
+    const isCustomGoal = isGoalCourse && activeGoal?.plan_mode === "custom";
+    const goalTopicIds = isCustomGoal && activeGoal?.selected_topics
+      ? new Set((activeGoal.selected_topics || []).map(normalizeId))
+      : null;
+
+    const relevantTopics = isCustomGoal
+      ? topicsList.filter(t => goalTopicIds.has(normalizeId(t.id)))
+      : topicsList;
+
+    const targetIndex = relevantTopics.findIndex(t => normalizeId(t.id) === normalizeId(topicId));
+
+    if (targetIndex > 0) {
+      for (let i = 0; i < targetIndex; i++) {
+        if (!completedSet.has(normalizeId(relevantTopics[i].id))) {
+          toast.error(`🔒 Complete "${relevantTopics[i].title}" before starting this topic!`);
+          navigate(`/study/${courseId || "python-basics"}/${relevantTopics[i].id}`, { replace: true });
+          return;
+        }
+      }
+    }
+  }, [userData, course, topicId, courseId, navigate, activeGoal, isGoalCourse]);
+
+  const loadNextProblem = async (overrideExcludeList = null) => {
     setLoading(true);
     setSelected(null);
     setSubmitted(false);
@@ -79,6 +123,8 @@ export default function StudySession() {
     setScore(null);
     setIsRetry(false);
     startTime.current = Date.now();
+
+    const excludeIds = overrideExcludeList !== null ? overrideExcludeList : seenProblemIds;
 
     try {
       if (courseId) {
@@ -92,7 +138,8 @@ export default function StudySession() {
 
       if (currentUser?.uid && topicId) {
         try {
-          const res = await fetch(`${process.env.REACT_APP_BACKEND_URL}/difficulty/next-problem/${currentUser.uid}/${topicId}`);
+          const excludeParam = excludeIds.length > 0 ? `?exclude=${encodeURIComponent(excludeIds.join(","))}` : "";
+          const res = await fetch(`${process.env.REACT_APP_BACKEND_URL}/difficulty/next-problem/${currentUser.uid}/${topicId}${excludeParam}`);
           if (res.ok) {
             const data = await res.json();
             if (data && data.id) {
@@ -109,7 +156,17 @@ export default function StudySession() {
         let level = "easy";
         if (currentUser?.uid) {
           const userSnap = await getDoc(doc(db, "users", currentUser.uid));
-          if (userSnap.exists()) level = userSnap.data()?.currentLevel || "easy";
+          if (userSnap.exists()) {
+            const udata = userSnap.data();
+            const topicSkill = udata?.skillRatings?.[topicId];
+            if (topicSkill) {
+              if (topicSkill >= 1350) level = "hard";
+              else if (topicSkill >= 1050) level = "medium";
+              else level = "easy";
+            } else {
+              level = udata?.currentLevel || "easy";
+            }
+          }
         }
 
         const allQ = query(collection(db, "problems"), where("courseId", "==", courseId || "python-basics"));
@@ -122,8 +179,11 @@ export default function StudySession() {
           return pNorm === targetNorm || prob.topicId?.toLowerCase() === topicId?.toLowerCase();
         });
 
-        const levelMatched = topicMatched.filter(prob => prob.difficulty === level);
-        const candidates = levelMatched.length > 0 ? levelMatched : topicMatched.length > 0 ? topicMatched : allProblems;
+        const unseen = topicMatched.filter(prob => !excludeIds.includes(prob.id));
+        const pool = unseen.length > 0 ? unseen : topicMatched.length > 0 ? topicMatched : allProblems;
+
+        const levelMatched = pool.filter(prob => prob.difficulty === level);
+        const candidates = levelMatched.length > 0 ? levelMatched : pool;
 
         if (candidates.length > 0) {
           p = candidates[Math.floor(Math.random() * candidates.length)];
@@ -133,6 +193,7 @@ export default function StudySession() {
       if (p) {
         setProblem(p);
         setIsMatched(matchedToLevel);
+        setSeenProblemIds(prev => prev.includes(p.id) ? prev : [...prev, p.id]);
         if (p.type === "coding") setCode(p.starterCode || "# Write your code here\n");
       }
     } catch (e) {
@@ -165,12 +226,24 @@ export default function StudySession() {
       });
       if (res.ok) {
         const data = await res.json();
-        setCurrentSkillRating(Math.round(data.new_skill));
+        const prevSkill = currentSkillRating;
+        const newSkill = Math.round(data.new_skill);
+        setCurrentSkillRating(newSkill);
         const change = Math.round(data.skill_change);
+
+        // Check if difficulty tier transitioned
+        const prevTier = prevSkill >= 1350 ? "hard" : prevSkill >= 1050 ? "medium" : "easy";
+        const newTier = newSkill >= 1350 ? "hard" : newSkill >= 1050 ? "medium" : "easy";
+        if (newTier !== prevTier && change > 0) {
+          toast.success(`🎉 Level Up! You advanced to ${newTier.toUpperCase()} tier!`, { id: "tier-levelup", duration: 4000 });
+        } else if (newTier !== prevTier && change < 0) {
+          toast(`Difficulty adjusted to ${newTier.toUpperCase()}`, { icon: "ℹ️", id: "tier-adjusted" });
+        }
+
         toast(
           (t) => (
             <span>
-              Skill rating: {Math.round(data.new_skill)}{" "}
+              Skill rating: {newSkill}{" "}
               {change > 0 ? (
                 <span style={{ color: "#10b981", fontWeight: "bold" }}>↑ +{change}</span>
               ) : (
@@ -203,17 +276,25 @@ export default function StudySession() {
     const points = correct ? (isRetry ? 5 : 10) : 0;
     const newTotal = (userData?.totalPoints || 0) + points;
 
-    if (correct) {
-      try {
-        await completeTopic(currentUser.uid, courseId, topicId);
-      } catch (err) {
-        console.warn("Failed to complete topic:", err);
+    setSessionRecords(prev => [
+      ...prev,
+      {
+        problemId: problem.id,
+        title: problem.title || `Question ${sessionIndex}`,
+        correct: correct,
+        score: earnedScore,
+        timeTaken
       }
-    }
+    ]);
+
+    // Topic is NOT completed on single question; student must complete full session with >= 70% score
 
     if (points > 0) {
       try {
-        await updateDoc(doc(db, "users", currentUser.uid), { totalPoints: newTotal });
+        await updateDoc(doc(db, "users", currentUser.uid), {
+          totalPoints: newTotal,
+          totalSolved: (userData?.totalSolved || 0) + 1
+        });
         toast.success(`+${points} XP earned!`);
         await updateStreak(currentUser.uid);
       } catch (err) {
@@ -231,11 +312,7 @@ export default function StudySession() {
       console.warn("Failed to save session data:", err);
     }
 
-    try {
-      await updateDifficulty(currentUser.uid, earnedScore, isRetry);
-    } catch (err) {
-      console.warn("Failed to update difficulty:", err);
-    }
+    // Backend Core 1 difficulty update handles the Elo and tier update accurately without conflict
 
     try {
       await checkAchievements(currentUser.uid, {
@@ -277,17 +354,26 @@ export default function StudySession() {
       const passed = result.output.trim() === problem.expectedOutput.trim();
       setCodeResult(passed);
       await callDifficultyUpdate(passed);
+
+      setSessionRecords(prev => [
+        ...prev,
+        {
+          problemId: problem.id,
+          title: problem.title || `Coding Challenge ${sessionIndex}`,
+          correct: passed,
+          score: passed ? 100 : 0,
+          timeTaken: Math.floor((Date.now() - startTime.current) / 1000)
+        }
+      ]);
+
       if (passed) {
          const points = isRetry ? 5 : 10;
-        try {
-          await completeTopic(currentUser.uid, courseId, topicId);
-        } catch (err) {
-          console.warn("Failed to complete topic:", err);
-        }
+        // Topic is NOT completed on single coding challenge; must complete full session with >= 70% score
 
         try {
           await updateDoc(doc(db, "users", currentUser.uid), {
-            totalPoints: (userData?.totalPoints || 0) + points
+            totalPoints: (userData?.totalPoints || 0) + points,
+            totalSolved: (userData?.totalSolved || 0) + 1
           });
           toast.success(`Correct output! +${points} XP`);
           await updateStreak(currentUser.uid);
@@ -362,12 +448,11 @@ export default function StudySession() {
     if (!chatInput.trim() || chatLoading) return;
     const userMsg = chatInput.trim();
     setChatInput("");
-    const newHistory = [...messages, { role: "user", content: userMsg }];
+    const newHistory = [...messages, { role: "user", content: userMsg, timestamp: Date.now() }];
     setMessages(newHistory);
     setChatLoading(true);
 
     const newCount = messagesSinceCheck + 1;
-    setMessagesSinceCheck(newCount);
     if (newCount >= 3) {
       setMessagesSinceCheck(0);
       const userMessagesOnly = newHistory
@@ -375,30 +460,72 @@ export default function StudySession() {
         .map(m => m.content);
       const last4UserMessages = userMessagesOnly.slice(-4);
       checkAgentState(last4UserMessages);
+    } else {
+      setMessagesSinceCheck(newCount);
     }
 
     const topic = course?.topics?.find(t => t.id === topicId);
-    const context = {
-      name: currentUser?.displayName || "Student",
-      topic: topic?.title || topicId,
-      level: userData?.currentLevel || "easy",
-      lastScore: score || 0
-    };
+    const currentTopicTitle = topic?.title || topicId || "variables";
+    const currentLevel = userData?.currentLevel || "easy";
+    const lastScore = score || 0;
 
-    const reply = await askAI(userMsg, messages, context);
-    setMessages(prev => [...prev, { role: "assistant", content: reply }]);
+    let replyText = "";
+    try {
+      const response = await fetch(
+        `${process.env.REACT_APP_BACKEND_URL}/agent/chat`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            user_id:  currentUser?.uid || "anonymous",
+            message:  userMsg,
+            topic:    topicId || currentTopicTitle,
+            level:    currentLevel,
+            score:    lastScore
+          })
+        }
+      );
+
+      if (!response.ok) {
+        throw new Error(`Backend returned ${response.status}`);
+      }
+
+      const data = await response.json();
+      console.log("[Chat] Response source:", data.source);
+      replyText = data.reply;
+
+      const ariaMsg = {
+        role:      "assistant",
+        content:   data.reply,
+        timestamp: Date.now(),
+        source:    data.source
+      };
+      setMessages(prev => [...prev, ariaMsg]);
+
+    } catch (error) {
+      console.error("[Chat] Error:", error);
+      replyText = "I am having trouble connecting right now. Please try again in a moment.";
+      const errorMsg = {
+        role:      "assistant",
+        content:   replyText,
+        timestamp: Date.now(),
+        source:    "error"
+      };
+      setMessages(prev => [...prev, errorMsg]);
+    } finally {
+      setChatLoading(false);
+    }
 
     try {
       await addDoc(collection(db, `users/${currentUser.uid}/chatHistory`), {
         role: "user", content: userMsg, topic: topic?.title, timestamp: serverTimestamp()
       });
       await addDoc(collection(db, `users/${currentUser.uid}/chatHistory`), {
-        role: "assistant", content: reply, topic: topic?.title, timestamp: serverTimestamp()
+        role: "assistant", content: replyText, topic: topic?.title, timestamp: serverTimestamp()
       });
     } catch (dbErr) {
       console.warn("Saving chat history to Firestore failed (bypassing):", dbErr);
     }
-    setChatLoading(false);
   };
 
   const handleRetry = () => {
@@ -412,6 +539,322 @@ export default function StudySession() {
   };
 
   const currentTopic = course?.topics?.find(t => t.id === topicId);
+  const topicList = course?.topics || [];
+  const normalizeId = (id) => (id || "").toUpperCase().replace(/^T0*(\d+)$/, (_, n) => `T${n.padStart(2, '0')}`);
+
+  // In custom goal mode, determine next topic strictly among goal's selected topics (skipping unchecked ones)
+  const isCustomGoal = isGoalCourse && activeGoal?.plan_mode === "custom";
+  const goalTopicIds = isCustomGoal && activeGoal?.selected_topics
+    ? new Set((activeGoal.selected_topics || []).map(normalizeId))
+    : null;
+
+  const relevantTopicList = isCustomGoal
+    ? topicList.filter(t => goalTopicIds.has(normalizeId(t.id)))
+    : topicList;
+
+  const currentTopicIdx = relevantTopicList.findIndex(t => normalizeId(t.id) === normalizeId(topicId));
+  const nextTopic = currentTopicIdx >= 0 && currentTopicIdx < relevantTopicList.length - 1 ? relevantTopicList[currentTopicIdx + 1] : null;
+
+  const correctCount = sessionRecords.filter(r => r.correct).length;
+  const totalQuestions = sessionRecords.length || QUESTIONS_PER_SESSION;
+  const finalAccuracy = totalQuestions > 0 ? Math.round((correctCount / totalQuestions) * 100) : (score === 100 ? 100 : 0);
+  const isPassed = finalAccuracy >= 70;
+  const xpEarned = isPassed ? (currentTopic?.xp || 70) : 0;
+
+  // Determine difficulty tier & Elo for next topic based on final accuracy:
+  // 100% -> Hard (1500 Elo)
+  // 85% - 99% -> Medium (1200 Elo)
+  // 70% - 84% -> Easy (900 Elo)
+  let nextDifficultyTier = "easy";
+  let nextDifficultyElo = 900;
+  if (finalAccuracy === 100) {
+    nextDifficultyTier = "hard";
+    nextDifficultyElo = 1500;
+  } else if (finalAccuracy >= 85) {
+    nextDifficultyTier = "medium";
+    nextDifficultyElo = 1200;
+  } else {
+    nextDifficultyTier = "easy";
+    nextDifficultyElo = 900;
+  }
+
+  const handleProceedNext = () => {
+    if (sessionIndex >= QUESTIONS_PER_SESSION) {
+      handleCompleteSession();
+    } else {
+      setSessionIndex(prev => prev + 1);
+      loadNextProblem();
+    }
+  };
+
+  const handleCompleteSession = async () => {
+    setSessionCompleted(true);
+    if (currentUser?.uid && topicId && courseId) {
+      try {
+        const userRef = doc(db, "users", currentUser.uid);
+        const userSnap = await getDoc(userRef);
+        if (userSnap.exists()) {
+          const udata = userSnap.data();
+          const enrolled = udata.enrolledCourses || [];
+
+          if (isPassed) {
+            // Topic PASSED with >= 70% accuracy: mark as completed and unlock next
+            const updatedEnrolled = enrolled.map(c => {
+              const cId = c.courseId || c;
+              if (cId === courseId) {
+                const prevCompleted = c.completedTopics || [];
+                if (!prevCompleted.includes(topicId)) {
+                  return { ...c, completedTopics: [...prevCompleted, topicId] };
+                }
+              }
+              return c;
+            });
+
+            const updates = {
+              enrolledCourses: updatedEnrolled,
+              currentLevel: nextDifficultyTier,
+              xp: (udata.xp || 0) + (currentTopic?.xp || 70)
+            };
+
+            // Set starting Elo for next topic so it immediately serves appropriate difficulty
+            if (nextTopic?.id) {
+              updates[`skillRatings.${nextTopic.id}`] = nextDifficultyElo;
+            }
+
+            await updateDoc(userRef, updates);
+            toast.success(`🎉 Topic Passed with ${finalAccuracy}%! Next topic difficulty: ${nextDifficultyTier.toUpperCase()}`);
+          } else {
+            // Topic NOT passed (< 70%): ensure it is not in completedTopics
+            const updatedEnrolled = enrolled.map(c => {
+              const cId = c.courseId || c;
+              if (cId === courseId) {
+                const prevCompleted = (c.completedTopics || []).filter(t => t !== topicId);
+                return { ...c, completedTopics: prevCompleted };
+              }
+              return c;
+            });
+            await updateDoc(userRef, { enrolledCourses: updatedEnrolled });
+            toast.error(`Score: ${finalAccuracy}%. You need at least 70% to pass this topic.`);
+          }
+        }
+      } catch (err) {
+        console.warn("Could not update completed topics:", err);
+      }
+    }
+  };
+
+  if (sessionCompleted) {
+    return (
+      <div style={{ minHeight: "100vh", background: s.bg, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+        <div style={{
+          background: s.card, border: `1px solid ${s.border}`, borderRadius: 16,
+          padding: "36px 32px", maxWidth: 540, width: "100%", textAlign: "center",
+          boxShadow: "0 20px 40px rgba(0,0,0,0.15)"
+        }}>
+          <div style={{
+            width: 72, height: 72, borderRadius: "50%",
+            background: isPassed ? "rgba(16,185,129,0.15)" : "rgba(239,68,68,0.15)",
+            color: isPassed ? "#10b981" : "#ef4444",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            fontSize: 36, margin: "0 auto 16px"
+          }}>
+            {isPassed ? "🎉" : "⚠️"}
+          </div>
+
+          <h2 style={{ fontSize: 24, fontWeight: 700, color: s.text, margin: "0 0 6px" }}>
+            {isPassed ? "Study Session Passed!" : "Session Incomplete (70% Required)"}
+          </h2>
+          <p style={{ fontSize: 14, color: s.muted, margin: "0 0 20px" }}>
+            {course?.title || "Python"} · {currentTopic?.title || topicId}
+          </p>
+
+          {/* Pass / Fail Banner */}
+          <div style={{
+            background: isPassed
+              ? "rgba(16,185,129,0.08)"
+              : "rgba(239,68,68,0.08)",
+            border: `1px solid ${isPassed ? "#10b981" : "#ef4444"}`,
+            borderRadius: 12, padding: "12px 16px", marginBottom: 20, textAlign: "left"
+          }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
+              <span style={{ fontWeight: 700, fontSize: 13, color: isPassed ? "#10b981" : "#ef4444" }}>
+                {isPassed ? "✅ Topic Completed & Passed" : "❌ Passing Score Not Reached"}
+              </span>
+              <span style={{
+                fontSize: 11, fontWeight: 700, padding: "2px 8px", borderRadius: 6,
+                background: isPassed ? "#10b981" : "#ef4444", color: "white"
+              }}>
+                {finalAccuracy}% / 70% Min
+              </span>
+            </div>
+            <p style={{ fontSize: 12, color: s.muted, margin: 0, lineHeight: 1.5 }}>
+              {isPassed
+                ? "Congratulations! You have satisfied the 70% threshold and unlocked the next topic in your curriculum."
+                : "Students cannot advance to the next session until scoring 70% or higher. Please retake the session to master this topic!"}
+            </p>
+          </div>
+
+          {/* Next Topic Starting Difficulty Card (Only when passed) */}
+          {isPassed && (
+            <div style={{
+              background: nextDifficultyTier === "hard"
+                ? "rgba(168,85,247,0.1)"
+                : nextDifficultyTier === "medium"
+                ? "rgba(245,158,11,0.1)"
+                : "rgba(16,185,129,0.1)",
+              border: `1px solid ${nextDifficultyTier === "hard" ? "#a855f7" : nextDifficultyTier === "medium" ? "#f59e0b" : "#10b981"}`,
+              borderRadius: 12, padding: "12px 16px", marginBottom: 20, textAlign: "left"
+            }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
+                <span style={{ fontWeight: 700, fontSize: 13, color: s.text }}>
+                  🎯 Next Topic Starting Difficulty
+                </span>
+                <span style={{
+                  fontWeight: 700, fontSize: 11, padding: "2px 8px", borderRadius: 6,
+                  background: nextDifficultyTier === "hard" ? "#a855f7" : nextDifficultyTier === "medium" ? "#f59e0b" : "#10b981",
+                  color: "white", textTransform: "uppercase"
+                }}>
+                  {nextDifficultyTier.toUpperCase()} ({nextDifficultyElo} Elo)
+                </span>
+              </div>
+              <p style={{ fontSize: 12, color: s.muted, margin: 0, lineHeight: 1.5 }}>
+                {finalAccuracy === 100
+                  ? "🌟 Perfect 100% score! The adaptive engine will start your next topic with HARD difficulty questions."
+                  : finalAccuracy >= 85
+                  ? "⚡ Strong performance (85%+ score)! The next topic will start with MEDIUM difficulty questions."
+                  : "🌱 Passed with 70%+ score! The next topic will start with EASY questions to build a strong foundation."}
+              </p>
+            </div>
+          )}
+
+          <div style={{
+            display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12,
+            background: s.bg, borderRadius: 12, padding: 16, border: `1px solid ${s.border}`,
+            marginBottom: 20
+          }}>
+            <div>
+              <p style={{ fontSize: 11, color: s.muted, margin: "0 0 4px", textTransform: "uppercase", fontWeight: 600 }}>Solved</p>
+              <p style={{ fontSize: 20, fontWeight: 700, color: s.text, margin: 0 }}>
+                {correctCount} / {totalQuestions}
+              </p>
+            </div>
+            <div>
+              <p style={{ fontSize: 11, color: s.muted, margin: "0 0 4px", textTransform: "uppercase", fontWeight: 600 }}>Accuracy</p>
+              <p style={{ fontSize: 20, fontWeight: 700, color: isPassed ? "#10b981" : "#ef4444", margin: 0 }}>
+                {finalAccuracy}%
+              </p>
+            </div>
+            <div>
+              <p style={{ fontSize: 11, color: s.muted, margin: "0 0 4px", textTransform: "uppercase", fontWeight: 600 }}>XP Earned</p>
+              <p style={{ fontSize: 20, fontWeight: 700, color: isPassed ? "#6366f1" : s.muted, margin: 0 }}>
+                {isPassed ? `+${xpEarned}` : "0"}
+              </p>
+            </div>
+          </div>
+
+          <div style={{ textAlign: "left", marginBottom: 20 }}>
+            <p style={{ fontSize: 12, fontWeight: 600, color: s.muted, textTransform: "uppercase", marginBottom: 8 }}>Questions Breakdown</p>
+            <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 140, overflowY: "auto" }}>
+              {sessionRecords.map((rec, i) => (
+                <div key={i} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "8px 12px", background: s.bg, borderRadius: 8, border: `1px solid ${s.border}` }}>
+                  <span style={{ fontSize: 13, color: s.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: "75%" }}>
+                    {i + 1}. {rec.title}
+                  </span>
+                  <span style={{ fontSize: 12, fontWeight: 600, color: rec.correct ? "#10b981" : "#ef4444" }}>
+                    {rec.correct ? "✓ Correct" : "✗ Incorrect"}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            {isPassed ? (
+              // Unlocked Next Topic button when passed
+              nextTopic && (
+                <button
+                  onClick={() => {
+                    setSessionCompleted(false);
+                    setSessionIndex(1);
+                    setSessionRecords([]);
+                    setSeenProblemIds([]);
+                    navigate(`/study/${courseId}/${nextTopic.id}`);
+                  }}
+                  style={{
+                    padding: "12px 20px", borderRadius: 8, background: "#6366f1",
+                    color: "white", border: "none", fontWeight: 600, fontSize: 14,
+                    cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8
+                  }}
+                >
+                  Next Topic: {nextTopic.title} ➔
+                </button>
+              )
+            ) : (
+              // Locked Next Topic button with alert when not passed (< 70%)
+              nextTopic && (
+                <div style={{
+                  padding: "12px 20px", borderRadius: 8, background: isDark ? "rgba(255,255,255,0.04)" : "#f1f5f9",
+                  color: s.muted, border: `1px dashed ${s.border}`, fontWeight: 600, fontSize: 13,
+                  display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+                  cursor: "not-allowed"
+                }}>
+                  🔒 Next Topic Locked ({nextTopic.title}) — Score 70%+ to Unlock
+                </div>
+              )
+            )}
+
+            <div style={{ display: "flex", gap: 10 }}>
+              <button
+                onClick={() => {
+                  setSessionCompleted(false);
+                  setSessionIndex(1);
+                  setSessionRecords([]);
+                  setSeenProblemIds([]);
+                  setSelected(null);
+                  setSubmitted(false);
+                  setShowResult(false);
+                  setCodeResult(null);
+                  setScore(null);
+                  setIsRetry(false);
+                  loadNextProblem([]);
+                }}
+                style={{
+                  flex: 1, padding: "10px", borderRadius: 8,
+                  background: !isPassed ? "#6366f1" : "transparent",
+                  color: !isPassed ? "white" : s.text,
+                  border: !isPassed ? "none" : `1px solid ${s.border}`,
+                  fontWeight: 600, fontSize: 13,
+                  cursor: "pointer"
+                }}
+              >
+                {!isPassed ? "🔁 Retake Session (Try Again)" : "🔄 Practice Again"}
+              </button>
+              <button
+                onClick={() => navigate(`/roadmap/${courseId}`)}
+                style={{
+                  flex: 1, padding: "10px", borderRadius: 8, background: "transparent",
+                  color: s.text, border: `1px solid ${s.border}`, fontWeight: 600, fontSize: 13,
+                  cursor: "pointer"
+                }}
+              >
+                🗺️ Roadmap
+              </button>
+              <button
+                onClick={() => navigate("/dashboard")}
+                style={{
+                  flex: 1, padding: "10px", borderRadius: 8, background: "transparent",
+                  color: s.text, border: `1px solid ${s.border}`, fontWeight: 600, fontSize: 13,
+                  cursor: "pointer"
+                }}
+              >
+                🏠 Dashboard
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   if (loading) return (
     <div style={{ minHeight: "100vh", background: s.bg, display: "flex", alignItems: "center", justifyContent: "center" }}>
@@ -424,9 +867,13 @@ export default function StudySession() {
       {/* Header */}
       <header style={{ background: s.header, borderBottom: `1px solid ${s.border}`, padding: "10px 24px", display: "flex", alignItems: "center", justifyContent: "space-between", position: "sticky", top: 0, zIndex: 30 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-          <button onClick={() => navigate(`/roadmap/${courseId}`)}
-            style={{ background: "transparent", border: "none", color: s.muted, cursor: "pointer", fontSize: 14 }}>
-            ← Back
+          <button onClick={() => {
+            if (window.confirm("Exit to Dashboard? Current session will not be completed until all questions are finished.")) {
+              navigate("/dashboard");
+            }
+          }}
+            style={{ background: "transparent", border: "none", color: s.muted, cursor: "pointer", fontSize: 13, display: "flex", alignItems: "center", gap: 4 }}>
+            ← Exit to Dashboard
           </button>
           <div style={{ width: 1, height: 20, background: s.border }} />
           <div>
@@ -436,12 +883,46 @@ export default function StudySession() {
             <p style={{ fontSize: 12, color: s.muted, margin: 0 }}>{problem?.type === "coding" ? "Coding Challenge" : "Multiple Choice"}</p>
           </div>
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <span style={{ background: "rgba(99,102,241,0.15)", color: "#6366f1", padding: "3px 10px", borderRadius: 4, fontSize: 11, fontWeight: 600 }}>
-            Skill: {currentSkillRating}
-          </span>
-          <span style={{ background: "rgba(99,102,241,0.1)", color: "#6366f1", padding: "3px 10px", borderRadius: 4, fontSize: 11, fontWeight: 500 }}>
-            {userData?.currentLevel || "easy"}
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          {isGoalCourse && (
+            <span style={{
+              background: activeGoal.plan_mode === "adaptive" ? "rgba(99,102,241,0.18)" : "rgba(13,148,136,0.18)",
+              color: activeGoal.plan_mode === "adaptive" ? "#818cf8" : "#0d9488",
+              padding: "3px 10px",
+              borderRadius: 4,
+              fontSize: 11,
+              fontWeight: 700
+            }}>
+              {activeGoal.plan_mode === "adaptive" ? "🤖 Adaptive Goal" : "🎯 Custom Goal"} ({QUESTIONS_PER_SESSION} Qs)
+            </span>
+          )}
+          {/* Question Progress Bar */}
+          <div style={{ display: "flex", flexDirection: "column", gap: 3, minWidth: 120 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: s.muted }}>
+              <span>Question</span>
+              <span style={{ fontWeight: 600, color: s.text }}>{sessionIndex} / {QUESTIONS_PER_SESSION}</span>
+            </div>
+            <div style={{ width: "100%", height: 5, background: s.border, borderRadius: 3, overflow: "hidden" }}>
+              <div style={{ width: `${Math.min(100, (sessionIndex / QUESTIONS_PER_SESSION) * 100)}%`, height: "100%", background: "#6366f1", borderRadius: 3, transition: "width 0.3s ease" }} />
+            </div>
+          </div>
+
+          <span style={{
+            background:
+              currentSkillRating >= 1350 ? "rgba(239,68,68,0.15)" :
+              currentSkillRating >= 1050 ? "rgba(245,158,11,0.15)" :
+              "rgba(16,185,129,0.15)",
+            color:
+              currentSkillRating >= 1350 ? "#f87171" :
+              currentSkillRating >= 1050 ? "#fbbf24" :
+              "#34d399",
+            padding: "3px 10px",
+            borderRadius: 4,
+            fontSize: 11,
+            fontWeight: 700,
+            textTransform: "uppercase"
+          }}>
+            {currentSkillRating >= 1350 ? "Hard" : currentSkillRating >= 1050 ? "Medium" : "Easy"}
           </span>
           {learnerState && learnerState.sentiment && (
             <span style={{
@@ -574,13 +1055,9 @@ export default function StudySession() {
                             Try Again
                           </button>
                         )}
-                        <button onClick={loadNextProblem}
+                        <button onClick={handleProceedNext}
                           style={{ flex: 1, padding: "9px", borderRadius: 8, background: "#6366f1", color: "white", border: "none", fontWeight: 600, fontSize: 13, cursor: "pointer" }}>
-                          Next Question
-                        </button>
-                        <button onClick={() => navigate(`/roadmap/${courseId}`)}
-                          style={{ flex: 1, padding: "9px", borderRadius: 8, background: "transparent", color: s.muted, border: `1px solid ${s.border}`, fontWeight: 600, fontSize: 13, cursor: "pointer" }}>
-                          Roadmap
+                          {sessionIndex >= QUESTIONS_PER_SESSION ? "Complete Session 🎉" : `Next Question (${sessionIndex}/${QUESTIONS_PER_SESSION})`}
                         </button>
                       </div>
                     </div>
@@ -596,9 +1073,9 @@ export default function StudySession() {
                         <p style={{ fontSize: 12, color: s.muted, margin: 0 }}>Expected: <code>{problem.expectedOutput}</code></p>
                       )}
                       {codeResult && (
-                        <button onClick={() => navigate(`/roadmap/${courseId}`)}
+                        <button onClick={handleProceedNext}
                           style={{ marginTop: 8, padding: "8px 16px", borderRadius: 6, background: "#6366f1", color: "white", border: "none", fontWeight: 600, fontSize: 12, cursor: "pointer" }}>
-                          Continue
+                          {sessionIndex >= QUESTIONS_PER_SESSION ? "Complete Session 🎉" : `Next Question (${sessionIndex}/${QUESTIONS_PER_SESSION})`}
                         </button>
                       )}
                     </div>

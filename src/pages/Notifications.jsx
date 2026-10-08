@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { useTheme } from "../context/ThemeContext";
 import { db } from "../firebase/config";
@@ -33,6 +34,7 @@ function timeAgo(ts) {
 export default function Notifications() {
   const { currentUser } = useAuth();
   const { isDark } = useTheme();
+  const navigate = useNavigate();
 
   const [notifs, setNotifs] = useState([]);
   const [filter, setFilter] = useState("All");
@@ -77,11 +79,19 @@ export default function Notifications() {
   };
 
   const handleChallengeAccept = async (notif) => {
-    if (notif.challengeId && !notif.challengeId.startsWith("demo")) {
-      try { await updateDoc(doc(db, "challenges", notif.challengeId), { status: "accepted" }); } catch {}
-    }
     await markRead(notif.id);
-    toast.success("Challenge accepted!");
+    if (notif.challengeId && !notif.challengeId.startsWith("demo")) {
+      try {
+        await updateDoc(doc(db, "challenges", notif.challengeId), {
+          status: "in_battle",
+          startedAt: Date.now()
+        });
+      } catch {}
+      toast.success("Challenge accepted! Entering Battle Arena... ⚔️");
+      navigate(`/battle/${notif.challengeId}`);
+    } else {
+      toast.success("Challenge accepted!");
+    }
   };
 
   const filtered = notifs.filter(n => {

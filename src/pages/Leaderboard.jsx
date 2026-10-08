@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { useTheme } from "../context/ThemeContext";
 import { db } from "../firebase/config";
@@ -8,7 +9,9 @@ import {
 } from "firebase/firestore";
 import Layout from "../components/Layout";
 import toast from "react-hot-toast";
-import { Trophy } from "lucide-react";
+import { Trophy, Swords } from "lucide-react";
+import { openGoogleCalendarEvent } from "../utils/calendarSync";
+import { getRandomBattleProblem } from "../utils/battleProblems";
 
 const COLORS = ["#6366f1","#0f9b8e","#f59e0b","#10b981","#8b5cf6","#ef4444","#3b82f6","#ec4899","#14b8a6","#f97316"];
 function getColor(name = "") { return COLORS[name.charCodeAt(0) % COLORS.length]; }
@@ -30,10 +33,12 @@ const COURSE_LABELS = { "python-basics": "Python", "javascript-mastery": "JavaSc
 export default function Leaderboard() {
   const { currentUser } = useAuth();
   const { isDark } = useTheme();
+  const navigate = useNavigate();
 
   const [tab, setTab] = useState("Global");
   const [users, setUsers] = useState([]);
   const [challenges, setChallenges] = useState([]);
+  const [activeBattles, setActiveBattles] = useState([]);
   const [sending, setSending] = useState(null);
 
   const s = isDark
@@ -49,6 +54,7 @@ export default function Leaderboard() {
     return unsub;
   }, []);
 
+  // Listen to incoming pending challenges
   useEffect(() => {
     if (!currentUser) return;
     const q = query(collection(db, "challenges"), where("to", "==", currentUser.uid), where("status", "==", "pending"));
@@ -60,31 +66,107 @@ export default function Leaderboard() {
     return unsub;
   }, [currentUser]);
 
+  // Listen to active/accepted battles involving the current user
+  useEffect(() => {
+    if (!currentUser) return;
+    const q1 = query(collection(db, "challenges"), where("to", "==", currentUser.uid));
+    const q2 = query(collection(db, "challenges"), where("from", "==", currentUser.uid));
+
+    const unsub1 = onSnapshot(q1, snap1 => {
+      const list1 = snap1.docs.map(d => ({ id: d.id, ...d.data() }));
+      onSnapshot(q2, snap2 => {
+        const list2 = snap2.docs.map(d => ({ id: d.id, ...d.data() }));
+        const combined = [...list1, ...list2];
+        const unique = Array.from(new Map(combined.map(item => [item.id, item])).values());
+        const active = unique.filter(c => (c.status === "in_battle" || c.status === "accepted") && c.type !== "friendRequest");
+        setActiveBattles(active);
+      });
+    });
+
+    return () => unsub1();
+  }, [currentUser]);
+
   const sendChallenge = async (targetUser) => {
     if (!currentUser) return toast.error("Login required");
     if (targetUser.id === currentUser.uid) return toast.error("Can't challenge yourself");
+
+    // Leaderboard Fair Play Rule: users within ±200 XP difference can challenge each other
+    const meUser = users.find(u => u.id === currentUser.uid);
+    const myPoints = meUser?.totalPoints || 0;
+    const targetPoints = targetUser.totalPoints || 0;
+    const xpDiff = Math.abs(myPoints - targetPoints);
+
+    if (xpDiff > 200) {
+      return toast.error(`Rank gap too large! Leaderboard duels require rivals within ±200 XP (Current diff: ${xpDiff} XP). You can challenge any friend in Community without XP limits!`);
+    }
+
     setSending(targetUser.id);
     try {
-      await addDoc(collection(db, "challenges"), {
+      const battleProblem = getRandomBattleProblem();
+      const docRef = await addDoc(collection(db, "challenges"), {
         from: currentUser.uid, fromName: currentUser.displayName || "You",
         to: targetUser.id, toName: targetUser.name, status: "pending",
-        topic: "General", xpStake: 100, timestamp: serverTimestamp(),
+        topic: battleProblem.topic || "Python",
+        xpStake: 100,
+        battleProblem,
+        player1: {
+          uid: currentUser.uid,
+          name: currentUser.displayName || "You",
+          status: "ready",
+          inArena: false,
+          progress: 0,
+          passedCount: 0,
+          score: 0,
+          passed: false
+        },
+        player2: {
+          uid: targetUser.id,
+          name: targetUser.name,
+          status: "invited",
+          inArena: false,
+          progress: 0,
+          passedCount: 0,
+          score: 0,
+          passed: false
+        },
+        timestamp: serverTimestamp(),
       });
-      await addDoc(collection(db, `users/${targetUser.id}/notifications`), {
-        type: "challenge", message: `${currentUser.displayName || "A user"} challenged you! 100 XP stake.`,
-        from: currentUser.uid, fromName: currentUser.displayName, read: false, timestamp: serverTimestamp(),
-      });
-      toast.success(`Challenge sent to ${targetUser.name}`);
-    } catch { toast.error("Could not send challenge"); }
+
+      // Deliver notification safely (does not fail challenge if subcollection security rules restrict write)
+      try {
+        await addDoc(collection(db, `users/${targetUser.id}/notifications`), {
+          type: "challenge",
+          challengeId: docRef.id,
+          message: `${currentUser.displayName || "A user"} challenged you to a 1v1 Code Duel! 100 XP stake.`,
+          from: currentUser.uid, fromName: currentUser.displayName, read: false, timestamp: serverTimestamp(),
+        });
+      } catch (notifErr) {
+        console.warn("Direct notification subcollection write bypassed (challenge doc exists):", notifErr);
+      }
+
+      toast.success(`1v1 Challenge sent to ${targetUser.name}!`);
+    } catch (err) {
+      console.error("Challenge error:", err);
+      toast.error("Could not send challenge: " + err.message);
+    }
     setSending(null);
   };
 
-  const respondChallenge = async (challengeId, accept) => {
+  const respondChallenge = async (ch, accept) => {
     const { updateDoc, doc } = await import("firebase/firestore");
     try {
-      await updateDoc(doc(db, "challenges", challengeId), { status: accept ? "accepted" : "declined" });
-      setChallenges(prev => prev.filter(c => c.id !== challengeId));
-      toast.success(accept ? "Challenge accepted!" : "Challenge declined.");
+      if (accept) {
+        await updateDoc(doc(db, "challenges", ch.id), {
+          status: "in_battle",
+          startedAt: Date.now()
+        });
+        toast.success("Battle accepted! Entering Arena... ⚔️");
+        navigate(`/battle/${ch.id}`);
+      } else {
+        await updateDoc(doc(db, "challenges", ch.id), { status: "declined" });
+        setChallenges(prev => prev.filter(c => c.id !== ch.id));
+        toast.success("Challenge declined.");
+      }
     } catch { toast.error("Action failed"); }
   };
 
@@ -206,10 +288,34 @@ export default function Leaderboard() {
                     {isMe ? (
                       <span style={{ fontSize: 11, color: s.muted }}>—</span>
                     ) : (
-                      <button onClick={() => sendChallenge(user)} disabled={sending === user.id}
-                        style={{ padding: "4px 10px", borderRadius: 6, background: sending === user.id ? s.border : "#6366f1", color: "white", border: "none", fontSize: 11, fontWeight: 600, cursor: sending === user.id ? "not-allowed" : "pointer" }}>
-                        {sending === user.id ? "..." : "Challenge"}
-                      </button>
+                      (() => {
+                        const meUser = users.find(u => u.id === currentUser?.uid);
+                        const myPoints = meUser?.totalPoints || 0;
+                        const xpDiff = Math.abs((user.totalPoints || 0) - myPoints);
+                        const isEligible = xpDiff <= 200;
+
+                        return (
+                          <button
+                            onClick={() => sendChallenge(user)}
+                            disabled={sending === user.id || !isEligible}
+                            title={!isEligible
+                              ? `XP difference is ${xpDiff} XP. On Leaderboard, duels are limited to within ±200 XP for fair ranking. Challenge friends directly in Community without XP limits!`
+                              : `Challenge to 1v1 Battle Duel (XP diff: ${xpDiff} XP)`}
+                            style={{
+                              padding: "4px 10px",
+                              borderRadius: 6,
+                              background: !isEligible ? (isDark ? "#232b3a" : "#e2e8f0") : sending === user.id ? s.border : "#6366f1",
+                              color: !isEligible ? s.muted : "white",
+                              border: "none",
+                              fontSize: 11,
+                              fontWeight: 600,
+                              cursor: !isEligible || sending === user.id ? "not-allowed" : "pointer"
+                            }}
+                          >
+                            {!isEligible ? "±200 XP Limit" : sending === user.id ? "..." : "Challenge"}
+                          </button>
+                        );
+                      })()
                     )}
                   </div>
                 );
@@ -225,23 +331,82 @@ export default function Leaderboard() {
         )}
 
         {tab === "Challenges" && (
-          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
             <div style={{ background: s.card, border: `1px solid ${s.border}`, borderRadius: 10, padding: 16, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
               <div>
                 <p style={{ fontWeight: 600, fontSize: 14, color: s.text, margin: "0 0 2px" }}>Send a challenge</p>
-                <p style={{ fontSize: 12, color: s.muted, margin: 0 }}>Pick a user from the Global tab</p>
+                <p style={{ fontSize: 12, color: s.muted, margin: 0 }}>Pick a rival from the Global tab to start a live 1v1 duel</p>
               </div>
               <button onClick={() => setTab("Global")} style={{ padding: "6px 14px", borderRadius: 6, background: "#6366f1", color: "white", border: "none", fontWeight: 600, fontSize: 12, cursor: "pointer" }}>
                 View Global
               </button>
             </div>
 
-            <p style={{ fontWeight: 600, fontSize: 14, color: s.text, margin: 0 }}>Incoming ({challenges.length})</p>
+            {/* Active Battles Section */}
+            {activeBattles.length > 0 && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                <p style={{ fontWeight: 700, fontSize: 14, color: "#10b981", margin: 0, display: "flex", alignItems: "center", gap: 6 }}>
+                  <Swords size={16} /> Active 1v1 Battles ({activeBattles.length})
+                </p>
+                {activeBattles.map(battle => {
+                  const opponentName = battle.from === currentUser?.uid ? battle.toName : battle.fromName;
+                  return (
+                    <div
+                      key={battle.id}
+                      style={{
+                        background: isDark ? "rgba(16, 185, 129, 0.08)" : "rgba(16, 185, 129, 0.05)",
+                        border: "1px solid rgba(16, 185, 129, 0.3)",
+                        borderRadius: 12,
+                        padding: 16,
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "space-between",
+                        flexWrap: "wrap",
+                        gap: 12
+                      }}
+                    >
+                      <div>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+                          <span style={{ background: "#10b981", color: "white", fontSize: 11, fontWeight: 700, padding: "2px 6px", borderRadius: 4 }}>
+                            LIVE NOW
+                          </span>
+                          <strong style={{ fontSize: 14, color: s.text }}>Vs {opponentName || "Rival"}</strong>
+                        </div>
+                        <p style={{ fontSize: 12, color: s.muted, margin: 0 }}>
+                          Topic: <strong>{battle.topic || "Python"}</strong> • Stake: <strong style={{ color: "#f59e0b" }}>{battle.xpStake || 100} XP</strong>
+                        </p>
+                      </div>
+                      <button
+                        onClick={() => navigate(`/battle/${battle.id}`)}
+                        style={{
+                          background: "linear-gradient(135deg, #10b981, #059669)",
+                          color: "white",
+                          border: "none",
+                          borderRadius: 8,
+                          padding: "9px 16px",
+                          fontWeight: 700,
+                          fontSize: 13,
+                          cursor: "pointer",
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 6,
+                          boxShadow: "0 4px 12px rgba(16, 185, 129, 0.25)"
+                        }}
+                      >
+                        <Swords size={16} /> Enter Battle Arena
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            <p style={{ fontWeight: 600, fontSize: 14, color: s.text, margin: 0 }}>Incoming Challenges ({challenges.length})</p>
 
             {challenges.length === 0 && (
-              <div style={{ textAlign: "center", padding: 40, background: s.card, border: `1px solid ${s.border}`, borderRadius: 10 }}>
+              <div style={{ textAlign: "center", padding: 36, background: s.card, border: `1px solid ${s.border}`, borderRadius: 10 }}>
                 <p style={{ fontWeight: 600, fontSize: 14, color: s.text, marginBottom: 4 }}>No incoming challenges</p>
-                <p style={{ fontSize: 13, color: s.muted }}>Challenge others from the leaderboard</p>
+                <p style={{ fontSize: 13, color: s.muted }}>Challenge someone from the leaderboard to start a battle!</p>
               </div>
             )}
 
@@ -253,19 +418,37 @@ export default function Leaderboard() {
                   </div>
                   <div style={{ flex: 1 }}>
                     <p style={{ fontWeight: 600, fontSize: 14, color: s.text, margin: 0 }}>{ch.fromName || "Challenger"}</p>
-                    <p style={{ fontSize: 12, color: s.muted, margin: 0 }}>{ch.topic || "General"} · {ch.xpStake || 100} XP</p>
+                    <p style={{ fontSize: 12, color: s.muted, margin: 0 }}>{ch.topic || "Python Battle"} · <span style={{ color: "#f59e0b", fontWeight: 600 }}>{ch.xpStake || 100} XP Stake</span></p>
                   </div>
                 </div>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-                  <button onClick={() => respondChallenge(ch.id, true)}
-                    style={{ padding: "8px", borderRadius: 6, background: "#10b981", color: "white", border: "none", fontWeight: 600, fontSize: 13, cursor: "pointer" }}>
-                    Accept
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 8 }}>
+                  <button onClick={() => respondChallenge(ch, true)}
+                    style={{ padding: "9px", borderRadius: 6, background: "linear-gradient(135deg, #10b981, #059669)", color: "white", border: "none", fontWeight: 700, fontSize: 13, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+                    <Swords size={15} /> Accept & Battle
                   </button>
-                  <button onClick={() => respondChallenge(ch.id, false)}
-                    style={{ padding: "8px", borderRadius: 6, background: "transparent", color: s.muted, border: `1px solid ${s.border}`, fontWeight: 500, fontSize: 13, cursor: "pointer" }}>
+                  <button onClick={() => respondChallenge(ch, false)}
+                    style={{ padding: "9px", borderRadius: 6, background: "transparent", color: s.muted, border: `1px solid ${s.border}`, fontWeight: 500, fontSize: 13, cursor: "pointer" }}>
                     Decline
                   </button>
                 </div>
+                <button
+                  onClick={() => {
+                    openGoogleCalendarEvent({
+                      title: `DevLingo Match: You vs ${ch.fromName || "Peer"}`,
+                      startDate: new Date(),
+                      durationHours: 1,
+                      details: `DevLingo 1v1 Battle Match.\nOpponent: ${ch.fromName || "Peer"}\nTopic: ${ch.topic || "Python Battle"}\nXP Stake: ${ch.xpStake || 100} XP`
+                    });
+                    toast.success("Opening Google Calendar...");
+                  }}
+                  style={{
+                    width: "100%", padding: "6px", borderRadius: 6,
+                    background: isDark ? "rgba(99,102,241,0.15)" : "rgba(99,102,241,0.08)",
+                    color: "#818cf8", border: "none", fontWeight: 600, fontSize: 12, cursor: "pointer"
+                  }}
+                >
+                  🗓️ Add to Google Calendar
+                </button>
               </div>
             ))}
           </div>
